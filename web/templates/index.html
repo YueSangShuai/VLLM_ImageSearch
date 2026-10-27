@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FG-CLIP 图文监控系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">FG-CLIP 监控系统</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link active">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>FG-CLIP 图文监控系统</h1>
+
+        <div class="dashboard">
+            <div class="card">
+                <h3>设备状态</h3>
+                <div id="deviceStats">
+                    <div class="stat">
+                        <span class="stat-value" id="deviceTotal">0</span>
+                        <span class="stat-label">总设备数</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="deviceOnline">0</span>
+                        <span class="stat-label">在线设备</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>监控状态</h3>
+                <div class="monitor-control">
+                    <div class="status-indicator">
+                        <span id="monitorStatus" class="status offline">离线</span>
+                    </div>
+                    <button id="startBtn" class="btn btn-success" onclick="startMonitoring()">启动监控</button>
+                    <button id="stopBtn" class="btn btn-danger" onclick="stopMonitoring()" disabled>停止监控</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>告警统计</h3>
+                <div class="stat">
+                    <span class="stat-value" id="alertCount">0</span>
+                    <span class="stat-label">今日告警</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>快速操作</h3>
+            <div class="quick-actions">
+                <a href="/devices" class="btn">添加设备</a>
+                <a href="/rules" class="btn">配置规则</a>
+                <a href="/alerts" class="btn">查看告警</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>最近告警</h3>
+            <div id="recentAlerts" class="recent-alerts">
+                <p class="empty-state">暂无告警记录</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        async function loadDashboard() {
+            try {
+                // 加载设备
+                const devicesRes = await fetch('/api/devices');
+                const devices = await devicesRes.json();
+                document.getElementById('deviceTotal').textContent = devices.length;
+                document.getElementById('deviceOnline').textContent = devices.filter(d => d.status === 'online').length;
+
+                // 加载告警
+                const alertsRes = await fetch('/api/alerts');
+                const alerts = await alertsRes.json();
+                document.getElementById('alertCount').textContent = alerts.length;
+                renderRecentAlerts(alerts.slice(0, 5));
+
+                // 检查监控状态
+                const statusRes = await fetch('/api/monitoring/status');
+                const status = await statusRes.json();
+                updateMonitorStatus(status.running);
+            } catch (e) {
+                console.error('加载数据失败:', e);
+            }
+        }
+
+        // 每3秒刷新一次数据
+        setInterval(loadDashboard, 3000);
+
+        function renderRecentAlerts(alerts) {
+            const container = document.getElementById('recentAlerts');
+            if (alerts.length === 0) {
+                container.innerHTML = '<p class="empty-state">暂无告警记录</p>';
+                return;
+            }
+            container.innerHTML = alerts.map(alert => `
+                <div class="alert-item">
+                    <div class="alert-info">
+                        <span class="alert-rule">${alert.rule_name}</span>
+                        <span class="alert-device">${alert.device_name}</span>
+                        <span class="alert-score">分数: ${alert.score}</span>
+                    </div>
+                    <span class="alert-time">${new Date(alert.timestamp).toLocaleString()}</span>
+                </div>
+            `).join('');
+        }
+
+        async function startMonitoring() {
+            const res = await fetch('/api/monitoring/start', { method: 'POST' });
+            const result = await res.json();
+            if (result.success) {
+                updateMonitorStatus(true);
+            }
+        }
+
+        async function stopMonitoring() {
+            const res = await fetch('/api/monitoring/stop', { method: 'POST' });
+            const result = await res.json();
+            if (result.success) {
+                updateMonitorStatus(false);
+            }
+        }
+
+        function updateMonitorStatus(running) {
+            const statusEl = document.getElementById('monitorStatus');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+
+            if (running) {
+                statusEl.textContent = '运行中';
+                statusEl.className = 'status online';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusEl.textContent = '离线';
+                statusEl.className = 'status offline';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        loadDashboard();
+    </script>
+</body>
+</html>

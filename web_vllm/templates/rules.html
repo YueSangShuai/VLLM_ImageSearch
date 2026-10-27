@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>规则配置 - 多模态大模型文搜实测平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        .step {
+            padding: 0.5rem 1.5rem;
+            border-radius: 20px;
+            margin: 0 0.5rem;
+            background: #e9ecef;
+            color: #6c757d;
+        }
+        .step.active {
+            background: #667eea;
+            color: white;
+        }
+        .step.completed {
+            background: #28a745;
+            color: white;
+        }
+        .step-content {
+            display: none;
+        }
+        .step-content.active {
+            display: block;
+        }
+        .video-container {
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+        #videoStream2 {
+            width: 100%;
+            max-height: 400px;
+            display: block;
+        }
+        .rule-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #667eea;
+        }
+        .rule-card.disabled {
+            opacity: 0.6;
+            border-left-color: #6c757d;
+        }
+        .add-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            font-size: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            background: #667eea;
+            color: white;
+            border: none;
+            box-shadow: 0 4px 12px rgba(102,126,234,0.4);
+            transition: all 0.3s;
+        }
+        .add-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(102,126,234,0.5);
+        }
+        .task-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+        .task-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border: 1px solid #e9ecef;
+            transition: all 0.3s;
+        }
+        .task-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102,126,234,0.2);
+        }
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 52px;
+            height: 28px;
+            vertical-align: middle;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 28px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #28a745;
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+        .toggle-label {
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link active">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>算法布控</h1>
+
+        <!-- 步骤指示器 -->
+        <div class="step-indicator" id="stepIndicator" style="display: none;">
+            <div class="step active" id="step1">1. 创建任务</div>
+            <div class="step" id="step2">2. 配置规则</div>
+            <div class="step" id="step3">3. 完成</div>
+        </div>
+
+        <!-- 步骤1: 创建任务 (不显示视频) -->
+        <div class="step-content active" id="content1">
+            <div class="card" id="taskListCard">
+                <div class="card-header">
+                    <h3>布控任务列表</h3>
+                    <button class="btn btn-primary" onclick="showCreateTask()">+ 新增算法</button>
+                </div>
+
+                <div id="taskGrid" class="task-grid">
+                    <p class="empty-state">暂无任务，点击右上角按钮创建</p>
+                </div>
+            </div>
+
+            <div class="card" id="createTaskCard" style="display: none;">
+                <h3>创建新任务</h3>
+                <form id="taskForm">
+                    <div class="form-group">
+                        <label>任务名称</label>
+                        <input type="text" id="taskName" required placeholder="例如: 入口布控">
+                    </div>
+
+                    <div class="form-group">
+                        <label>选择摄像头通道</label>
+                        <select id="taskDevice" required>
+                            <option value="">-- 请选择设备 --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="hideCreateTask()">取消</button>
+                        <button type="submit" class="btn btn-primary">下一步 →</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 步骤2: 配置规则 (显示视频) -->
+        <div class="step-content" id="content2">
+            <div class="card-header" style="margin-bottom: 1rem;">
+                <h3 id="taskTitle">任务规则配置</h3>
+                <button class="btn btn-secondary" onclick="backToStep1()">← 返回</button>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <!-- 左侧: 视频 -->
+                <div style="flex: 1;">
+                    <div class="card">
+                        <div class="video-container" style="background: #000; border-radius: 8px;">
+                            <img id="videoStream2" src="" alt="实时视频" style="width: 100%;">
+                        </div>
+                        <div style="margin-top: 1rem; padding: 1rem; background: #e7f3ff; border-radius: 8px;">
+                            <strong>当前通道:</strong> <span id="currentDevice"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧: 规则列表 -->
+                <div style="flex: 1;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>布控规则列表</h3>
+                            <button class="btn btn-primary" onclick="showAddRuleModal()">+ 添加规则</button>
+                        </div>
+                        <div id="rulesList">
+                            <p class="empty-state">暂无规则，点击上方按钮添加</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 1rem;">
+                <button class="btn btn-success btn-large" onclick="finishTask()">✓ 完成配置</button>
+            </div>
+        </div>
+
+        <!-- 步骤3: 完成 -->
+        <div class="step-content" id="content3">
+            <div class="card" style="text-align: center; padding: 3rem;">
+                <h2 style="color: #28a745; margin-bottom: 1rem;">✓ 任务配置完成!</h2>
+                <p id="finishMessage">任务已保存</p>
+                <div style="margin-top: 2rem;">
+                    <button class="btn btn-primary" onclick="backToRulesHome()">返回规则配置主页</button>
+                    <a href="/" class="btn btn-secondary">返回首页</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加规则弹窗 -->
+    <div id="ruleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">添加规则</h3>
+                <span class="close" onclick="closeRuleModal()">&times;</span>
+            </div>
+            <form id="ruleForm">
+                <input type="hidden" id="ruleId">
+
+                <div class="form-group">
+                    <label>规则名称</label>
+                    <input type="text" id="ruleName" required placeholder="例如: 检测红衣行人">
+                </div>
+
+                <div class="form-group">
+                    <label>正样本文本（每行一个，任一匹配即触发）</label>
+                    <textarea id="rulePositive" required rows="3" placeholder="A man wearing black clothes&#10;Boy in dark clothes"></textarea>
+                    <small>每行一个正样本，与任一正样本匹配且分数高于负样本则触发</small>
+                </div>
+
+                <div class="form-group">
+                    <label>负样本文本（每行一个，容易误判的内容）</label>
+                    <textarea id="ruleNegative" rows="4" placeholder="A woman&#10;Someone with hat&#10;Child"></textarea>
+                    <small>每行一个负样本，用于排除误判</small>
+                </div>
+
+                <div class="form-group">
+                    <label>正样本阈值</label>
+                    <div class="range-group">
+                        <input type="range" id="ruleThresholdRange" min="0" max="100" value="50"
+                               oninput="updateThresholdDisplay()">
+                        <input type="number" id="ruleThreshold" min="0" max="1" step="0.01" value="0.5" required
+                               onchange="updateRangeDisplay()">
+                    </div>
+                    <small>正样本相似度需超过此阈值</small>
+                </div>
+
+                <div class="form-group">
+                    <label>触发间隔（秒）</label>
+                    <input type="number" id="ruleInterval" min="1" max="3600" value="60" required>
+                    <small>同一条规则触发后，需要间隔多少秒才能再次触发</small>
+                </div>
+
+                <div class="form-group">
+                    <label>分数差值阈值</label>
+                    <input type="number" id="ruleScoreDiff" min="0" max="1" step="0.01" value="0" placeholder="0">
+                    <small>正样本最高分必须比负样本最高分高多少才触发（0表示不限制）</small>
+                </div>
+
+                <div class="form-group">
+                    <label style="display: flex; align-items: center;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="ruleEnabled" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label" id="toggleLabel">启用此规则</span>
+                    </label>
+                    <small>关闭后此规则将不会触发告警</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeRuleModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentTask = null;
+        let tasks = [];
+        let editingRuleId = null;
+        let videoInterval = null;
+        let currentDeviceId = null;
+
+        // 加载设备列表
+        async function loadDevices() {
+            const res = await fetch('/api/devices');
+            const devices = await res.json();
+            const select = document.getElementById('taskDevice');
+            select.innerHTML = '<option value="">-- 请选择设备 --</option>';
+            devices.forEach(d => {
+                select.innerHTML += `<option value="${d.id}" data-device='${JSON.stringify(d)}'>${d.name} (${d.ip})</option>`;
+            });
+        }
+
+        // 加载任务列表
+        async function loadTasks() {
+            const res = await fetch('/api/tasks');
+            tasks = await res.json();
+            renderTaskGrid();
+        }
+
+        function renderTaskGrid() {
+            const container = document.getElementById('taskGrid');
+            if (tasks.length === 0) {
+                container.innerHTML = '<p class="empty-state">暂无任务，点击右上角按钮创建</p>';
+                return;
+            }
+            container.innerHTML = tasks.map(t => `
+                <div class="task-card">
+                    <h4 style="margin-bottom: 0.5rem;">${t.name}</h4>
+                    <p style="color: #6c757d; font-size: 0.9rem; margin-bottom: 1rem;">
+                        设备: ${t.device_name}<br>
+                        规则数: ${t.rules ? t.rules.length : 0}
+                    </p>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-small" onclick="editTask('${t.id}')">编辑</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteTask('${t.id}')">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 显示/隐藏创建任务表单
+        function showCreateTask() {
+            document.getElementById('taskListCard').style.display = 'none';
+            document.getElementById('createTaskCard').style.display = 'block';
+            document.getElementById('stepIndicator').style.display = 'flex';
+            goToStep(1);
+        }
+
+        function hideCreateTask() {
+            document.getElementById('taskListCard').style.display = 'block';
+            document.getElementById('createTaskCard').style.display = 'none';
+            document.getElementById('stepIndicator').style.display = 'none';
+            document.getElementById('taskForm').reset();
+        }
+
+        // 步骤切换
+        function goToStep(step) {
+            document.querySelectorAll('.step').forEach((s, i) => {
+                s.classList.remove('active', 'completed');
+                if (i + 1 < step) s.classList.add('completed');
+                if (i + 1 === step) s.classList.add('active');
+            });
+            document.querySelectorAll('.step-content').forEach((c, i) => {
+                c.classList.remove('active');
+                if (i + 1 === step) c.classList.add('active');
+            });
+        }
+
+        function backToStep1() {
+            stopVideoStream();
+            document.getElementById('stepIndicator').style.display = 'none';
+            document.getElementById('createTaskCard').style.display = 'none';
+            document.getElementById('taskListCard').style.display = 'block';
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active', 'completed'));
+            document.querySelectorAll('.step-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('content1').classList.add('active');
+        }
+
+        function resetToList() {
+            currentTask = null;
+            hideCreateTask();
+        }
+
+        function backToRulesHome() {
+            // 返回规则配置主页（任务列表）
+            stopVideoStream();
+            currentTask = null;
+            document.getElementById('stepIndicator').style.display = 'none';
+            document.getElementById('createTaskCard').style.display = 'none';
+            document.getElementById('taskListCard').style.display = 'block';
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active', 'completed'));
+            document.querySelectorAll('.step-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('content1').classList.add('active');
+            loadTasks(); // 刷新任务列表
+        }
+
+        // 创建任务
+        document.getElementById('taskForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const select = document.getElementById('taskDevice');
+            const device = JSON.parse(select.options[select.selectedIndex].dataset.device);
+
+            currentTask = {
+                id: 'task_' + Date.now(),
+                name: document.getElementById('taskName').value,
+                device_id: device.id,
+                device_name: device.name,
+                device: device,
+                rules: [],
+                created_at: new Date().toISOString()
+            };
+
+            document.getElementById('taskTitle').textContent = `任务: ${currentTask.name}`;
+            document.getElementById('currentDevice').textContent = `${currentTask.device_name} (${currentTask.device.ip})`;
+
+            // 启动视频流
+            startVideoStream(currentTask.device);
+            renderRules();
+
+            goToStep(2);
+        });
+
+        function startVideoStream(device) {
+            currentDeviceId = device.id;
+            const img = document.getElementById('videoStream2');
+
+            function updateFrame() {
+                if (currentDeviceId) {
+                    img.src = '/api/video/frame/' + currentDeviceId + '?t=' + Date.now();
+                }
+            }
+
+            updateFrame();
+            if (videoInterval) clearInterval(videoInterval);
+            videoInterval = setInterval(updateFrame, 100); // 10fps
+        }
+
+        function stopVideoStream() {
+            currentDeviceId = null;
+            if (videoInterval) {
+                clearInterval(videoInterval);
+                videoInterval = null;
+            }
+            const img = document.getElementById('videoStream2');
+            img.src = '';
+        }
+
+        function renderRules() {
+            const container = document.getElementById('rulesList');
+            if (!currentTask.rules || currentTask.rules.length === 0) {
+                container.innerHTML = '<p class="empty-state">暂无规则，点击上方按钮添加</p>';
+                return;
+            }
+            container.innerHTML = currentTask.rules.map(r => {
+                const positiveList = Array.isArray(r.positive) ? r.positive : (r.text ? [r.text] : []);
+                const positiveDisplay = positiveList.slice(0, 2).join(' / ');
+                const moreCount = positiveList.length > 2 ? ` (+${positiveList.length - 2}个)` : '';
+                const isEnabled = r.enabled !== false;
+                const scoreDiff = r.score_diff || 0;
+                return `
+                <div class="rule-card ${isEnabled ? '' : 'disabled'}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>${r.name}</strong>
+                            <div style="font-size: 0.9rem;">"${positiveDisplay}${moreCount}"</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">阈值: ${r.threshold} | 间隔: ${r.interval || 60}秒${scoreDiff > 0 ? ` | 分数差: ${scoreDiff}` : ''}</div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <label class="toggle-switch" title="${isEnabled ? '点击禁用' : '点击启用'}">
+                                <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleRule('${r.id}', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <button class="btn btn-small" onclick="editRule('${r.id}')">编辑</button>
+                            <button class="btn btn-small btn-danger" onclick="deleteRule('${r.id}')">删除</button>
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+        }
+
+        async function toggleRule(id, enabled) {
+            const rule = currentTask.rules.find(r => r.id === id);
+            if (rule) {
+                rule.enabled = enabled;
+                await saveTask();
+                renderRules();
+            }
+        }
+
+        function showAddRuleModal() {
+            editingRuleId = null;
+            document.getElementById('ruleForm').reset();
+            document.getElementById('ruleThresholdRange').value = 50;
+            document.getElementById('ruleThreshold').value = '0.50';
+            document.getElementById('ruleModal').style.display = 'flex';
+        }
+
+        function closeRuleModal() {
+            document.getElementById('ruleModal').style.display = 'none';
+        }
+
+        function editRule(id) {
+            console.log('editRule called, id:', id);
+            const rule = currentTask.rules.find(r => r.id === id);
+            console.log('Found rule:', rule);
+            if (!rule) {
+                alert('规则未找到');
+                return;
+            }
+
+            editingRuleId = id;
+            document.getElementById('ruleId').value = rule.id;
+            document.getElementById('ruleName').value = rule.name;
+            document.getElementById('rulePositive').value = (rule.positive || rule.text || ['']).join('\n');
+            document.getElementById('ruleNegative').value = (rule.negative || []).join('\n');
+            document.getElementById('ruleThreshold').value = rule.threshold;
+            document.getElementById('ruleThresholdRange').value = rule.threshold * 100;
+            document.getElementById('ruleInterval').value = rule.interval || 60;
+            document.getElementById('ruleScoreDiff').value = rule.score_diff || 0;
+            document.getElementById('ruleEnabled').checked = rule.enabled !== false;
+            updateToggleLabel();
+            document.getElementById('ruleModal').style.display = 'flex';
+        }
+
+        async function deleteRule(id) {
+            if (!confirm('确定要删除这个规则吗？')) return;
+            currentTask.rules = currentTask.rules.filter(r => r.id !== id);
+            await saveTask();
+            renderRules();
+        }
+
+        function updateThresholdDisplay() {
+            document.getElementById('ruleThreshold').value = (document.getElementById('ruleThresholdRange').value / 100).toFixed(2);
+        }
+
+        function updateRangeDisplay() {
+            document.getElementById('ruleThresholdRange').value = Math.round(document.getElementById('ruleThreshold').value * 100);
+        }
+
+        function updateToggleLabel() {
+            const isEnabled = document.getElementById('ruleEnabled').checked;
+            document.getElementById('toggleLabel').textContent = isEnabled ? '启用此规则' : '禁用此规则';
+        }
+
+        // 初始化开关状态
+        document.getElementById('ruleEnabled').addEventListener('change', updateToggleLabel);
+
+        async function saveTask() {
+            // 检查任务是否已存在，存在则更新，否则创建
+            const existingTask = tasks.find(t => t.id === currentTask.id);
+            if (existingTask) {
+                await fetch('/api/tasks/' + currentTask.id, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(currentTask)
+                });
+            } else {
+                await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(currentTask)
+                });
+                tasks.push(currentTask);
+            }
+        }
+
+        document.getElementById('ruleForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const positiveText = document.getElementById('rulePositive').value;
+            const negativeText = document.getElementById('ruleNegative').value;
+            const positiveList = positiveText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+            const negativeList = negativeText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+            const rule = {
+                id: editingRuleId || 'rule_' + Date.now(),
+                name: document.getElementById('ruleName').value,
+                positive: positiveList,
+                negative: negativeList,
+                threshold: parseFloat(document.getElementById('ruleThreshold').value),
+                interval: parseInt(document.getElementById('ruleInterval').value) || 60,
+                score_diff: parseFloat(document.getElementById('ruleScoreDiff').value) || 0,
+                enabled: document.getElementById('ruleEnabled').checked
+            };
+
+            if (editingRuleId) {
+                const idx = currentTask.rules.findIndex(r => r.id === editingRuleId);
+                currentTask.rules[idx] = rule;
+            } else {
+                currentTask.rules.push(rule);
+            }
+
+            await saveTask();
+            closeRuleModal();
+            renderRules();
+        });
+
+        async function finishTask() {
+            stopVideoStream();
+            document.getElementById('finishMessage').textContent = `任务 "${currentTask.name}" 已配置 ${currentTask.rules.length} 条规则`;
+            goToStep(3);
+        }
+
+        async function editTask(id) {
+            try {
+                const res = await fetch('/api/tasks/' + id);
+                currentTask = await res.json();
+                document.getElementById('stepIndicator').style.display = 'flex';
+                document.getElementById('taskListCard').style.display = 'none';
+                document.getElementById('createTaskCard').style.display = 'none';
+                document.getElementById('taskTitle').textContent = `任务: ${currentTask.name}`;
+                document.getElementById('currentDevice').textContent = `${currentTask.device_name}`;
+
+                // 确保device对象有效
+                if (currentTask.device && currentTask.device.id) {
+                    startVideoStream(currentTask.device);
+                }
+                renderRules();
+                goToStep(2);
+            } catch (e) {
+                console.error('编辑任务失败:', e);
+                alert('编辑任务失败: ' + e.message);
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!confirm('确定要删除这个任务吗？')) return;
+            await fetch('/api/tasks/' + id, {method: 'DELETE'});
+            await loadTasks();
+        }
+
+        // 初始化
+        loadDevices();
+        loadTasks();
+    </script>
+</body>
+</html>

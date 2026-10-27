@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多模态大模型文搜实测平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link active">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>多模态大模型文搜实测平台</h1>
+
+        <div class="dashboard">
+            <div class="card">
+                <h3>设备状态</h3>
+                <div id="deviceStats">
+                    <div class="stat">
+                        <span class="stat-value" id="deviceTotal">0</span>
+                        <span class="stat-label">总设备数</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="deviceOnline">0</span>
+                        <span class="stat-label">在线设备</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>监控状态</h3>
+                <div class="monitor-control">
+                    <div class="status-indicator">
+                        <span id="monitorStatus" class="status offline">离线</span>
+                    </div>
+                    <button id="startBtn" class="btn btn-success" onclick="startMonitoring()">启动监控</button>
+                    <button id="stopBtn" class="btn btn-danger" onclick="stopMonitoring()" disabled>停止监控</button>
+                </div>
+                <div class="model-info">
+                    <div>
+                        <span class="model-label">模型格式</span>
+                        <span id="modelType" class="model-badge">加载中</span>
+                    </div>
+                    <div>
+                        <span class="model-label">当前模型</span>
+                        <span id="modelName" class="model-name">-</span>
+                    </div>
+                    <div id="mmprojRow" style="display: none;">
+                        <span class="model-label">视觉投影</span>
+                        <span id="mmprojName" class="model-name">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>告警统计</h3>
+                <div class="stat">
+                    <span class="stat-value" id="alertCount">0</span>
+                    <span class="stat-label">今日告警</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>快速操作</h3>
+            <div class="quick-actions">
+                <a href="/devices" class="btn">添加设备</a>
+                <a href="/rules" class="btn">配置规则</a>
+                <a href="/alerts" class="btn">查看告警</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>最近告警</h3>
+            <div id="recentAlerts" class="recent-alerts">
+                <p class="empty-state">暂无告警记录</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+        async function loadDashboard() {
+            try {
+                // 加载设备
+                const devicesRes = await fetch('/api/devices');
+                const devices = await devicesRes.json();
+                document.getElementById('deviceTotal').textContent = devices.length;
+                document.getElementById('deviceOnline').textContent = devices.filter(d => d.status === 'online').length;
+
+                // 加载告警
+                const alertsRes = await fetch('/api/alerts');
+                const alerts = await alertsRes.json();
+                document.getElementById('alertCount').textContent = alerts.length;
+                renderRecentAlerts(alerts.slice(0, 5));
+
+                // 检查监控状态
+                const statusRes = await fetch('/api/monitoring/status');
+                const status = await statusRes.json();
+                updateMonitorStatus(status.running);
+                updateModelInfo(status.model);
+            } catch (e) {
+                console.error('加载数据失败:', e);
+            }
+        }
+
+        // 每3秒刷新一次数据
+        setInterval(loadDashboard, 3000);
+
+        function renderRecentAlerts(alerts) {
+            const container = document.getElementById('recentAlerts');
+            if (alerts.length === 0) {
+                container.innerHTML = '<p class="empty-state">暂无告警记录</p>';
+                return;
+            }
+            container.innerHTML = alerts.map(alert => `
+                <div class="alert-item">
+                    <div class="alert-info">
+                        <span class="alert-rule">${alert.rule_name}</span>
+                        <span class="alert-device">${alert.device_name}</span>
+                        <span class="alert-score">分数: ${alert.score}</span>
+                    </div>
+                    ${(alert.base_description || alert.description) ? `
+                    <details class="alert-desc" style="margin-top:4px;font-size:13px;line-height:1.45;">
+                        <summary style="cursor:pointer;color:#555;">${(alert.base_description || alert.description).slice(0, 60)}${(alert.base_description || alert.description).length > 60 ? '…' : ''}</summary>
+                        <div style="margin-top:4px;color:#333;">${alert.base_description || alert.description}</div>
+                        ${alert.description_zh ? `<div style="margin-top:4px;color:#888;">${alert.description_zh}</div>` : ''}
+                        ${alert.attributes && alert.attributes.length ? `<div style="margin-top:4px;color:#2b6cb0;font-size:12px;">属性: ${alert.attributes.join(', ')}</div>` : ''}
+                    </details>` : ''}
+                    <span class="alert-time">${new Date(alert.timestamp).toLocaleString()}</span>
+                </div>
+            `).join('');
+        }
+
+        async function startMonitoring() {
+            const res = await fetch('/api/monitoring/start', { method: 'POST' });
+            const result = await res.json();
+            if (result.success) {
+                updateMonitorStatus(true);
+            }
+        }
+
+        async function stopMonitoring() {
+            const res = await fetch('/api/monitoring/stop', { method: 'POST' });
+            const result = await res.json();
+            if (result.success) {
+                updateMonitorStatus(false);
+            }
+        }
+
+        function updateMonitorStatus(running) {
+            const statusEl = document.getElementById('monitorStatus');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+
+            if (running) {
+                statusEl.textContent = '运行中';
+                statusEl.className = 'status online';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusEl.textContent = '离线';
+                statusEl.className = 'status offline';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function updateModelInfo(model) {
+            if (!model) return;
+
+            const typeEl = document.getElementById('modelType');
+            const nameEl = document.getElementById('modelName');
+            const mmprojRow = document.getElementById('mmprojRow');
+            const mmprojName = document.getElementById('mmprojName');
+
+            typeEl.textContent = model.type || '未知';
+            typeEl.className = `model-badge ${model.type === 'GGUF' ? 'gguf' : 'hf'}`;
+            nameEl.textContent = model.model_basename || model.model_name || '-';
+            nameEl.title = model.model_name || '';
+
+            if (model.type === 'GGUF' && model.mmproj_basename) {
+                mmprojRow.style.display = 'block';
+                mmprojName.textContent = model.mmproj_basename;
+                mmprojName.title = model.mmproj_path || '';
+            } else {
+                mmprojRow.style.display = 'none';
+            }
+        }
+
+        loadDashboard();
+    </script>
+</body>
+</html>

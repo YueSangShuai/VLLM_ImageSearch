@@ -1,0 +1,15 @@
+{
+ "image": "/data/yuesang/LLM/FG-CLIP/web_vllm_cpp/data/alerts_images/2026-09-24/一楼电梯厅/黑衣服男生/original/alert_1790208137158_137158.jpg",
+ "detections": [
+  {
+   "bbox": [
+    279,
+    1,
+    318,
+    113
+   ],
+   "confidence": 0.6749503016471863
+  }
+ ],
+ "note": "生产路径：scale=min(640/max(h,w),1) resize 后 ultralytics 640 letterbox，坐标除 scale"
+}

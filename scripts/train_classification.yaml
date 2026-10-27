@@ -1,0 +1,93 @@
+# FG-CLIP Classification Training Configuration
+
+# Model configuration
+model:
+  base_model: "/data/yuesang/LLM/MARS/fg-clip"
+  model_name_or_path: "/data/yuesang/LLM/MARS/fg-clip"
+  from_openai: true
+
+# Data configuration
+data:
+  train_jsonfiles:
+    - /data/yuesang/person_data/SYNTH-PEDES/json/train_new_processed.json
+    - /data/yuesang/person_data/MARS/json/val_new_processed.json
+    - /data/yuesang/person_data/MARS/json/train_new_processed.json
+    - /data/yuesang/person_data/PAB/json/val_new_processed.json
+    - /data/yuesang/person_data/PAB/json/train_new_processed.json
+    - /data/yuesang/person_data/pa100k/json/train_new_processed.json
+    - /data/yuesang/person_data/19w/json/train_new_relabel.json
+    - /data/yuesang/person_data/T4/V1/json/train_new_relabel.json
+    - /data/yuesang/person_data/T4/V2/json/train_new_relabel.json
+  val_jsonfiles:
+    - /data/yuesang/person_data/pa100k/json/test_new_processed.json
+    - /data/yuesang/person_data/pa100k/json/val_new_processed.json
+    - /data/yuesang/person_data/19w/json/val_new_relabel.json
+    - /data/yuesang/person_data/T4/V1/json/val_new_relabel.json
+    - /data/yuesang/person_data/T4/V1/json/val_new_relabel.json
+  image_root: ""
+
+# Classifier configuration
+classifier:
+  yaml_path: "./configs/classifier_config.yaml"
+
+# Training configuration
+training:
+  output_dir: "./checkpoints/fgclip-classification"
+  num_epochs: 20
+  per_device_train_batch_size: 4096
+  per_device_eval_batch_size: 4096
+  gradient_accumulation_steps: 1
+  learning_rate: 1e-3
+  weight_decay: 0.001
+  warmup_steps: 200
+  lr_scheduler_type: "cosine"
+  evaluation_strategy: "epoch"
+  save_strategy: "epoch"
+  save_steps: 5000
+  save_total_limit: 6
+  logging_steps: 999999
+  dataloader_num_workers: 8
+  dataloader_pin_memory: true
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+# GPU configuration
+gpu:
+  # cuda_visible_devices: "4"  # Not needed, use deepspeed_include instead
+  deepspeed_include: "localhost:4,5,6,7"  # Use GPU 4, 5, 6, 7
+  train_use_word_size: 4  # 4 GPUs
+
+# Freezing options
+freeze:
+  vision: true
+  text: true
+
+# Classification options
+classification:
+  use_classification: true
+  classification_loss_weight: 1.0
+
+# Bbox options
+bbox:
+  add_box_loss: false
+  use_hard_neg: false
+
+# Model architecture
+model_arch:
+  base_image_size: 224
+  base_seq_length: 77
+  max_seq_length: 248
+  save_safetensors: true
+
+# Other options
+other:
+  lazy_preprocess: true
+  report_to: "none"
+  skip_invalid_labels: true
+  print_eval_metrics: true  # 是否打印每个类别的评估指标
+  log_eval_metrics: false  # 是否在日志中输出评估指标字典
+
+# DeepSpeed configuration
+deepspeed:
+  config_path: "./scripts/zero2.json"

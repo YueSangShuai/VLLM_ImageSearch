@@ -1,0 +1,16 @@
+# 运行产生的数据
+/data/
+*.bak
+
+# 模型权重
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+
+# 缓存/临时文件
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store

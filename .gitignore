@@ -1,0 +1,79 @@
+# ============================================================
+# 模型权重（所有目录 + 所有格式兜底）
+# ============================================================
+/models/
+/checkpoints/
+/split_models/
+/onnx_exports/
+/web_vllm_rknn/models/
+/web_vllm_cpp/models/
+.hf_cache/
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.gguf
+*.rknn
+*.rkllm
+*.bin
+*.ckpt
+*.tflite
+*.pb
+
+# ============================================================
+# 第三方依赖（见根目录 DEPENDENCIES.md 获取下载配置方法）
+# ============================================================
+third_party/
+/web_vllm_rknn/rknn-llm/
+/web_vllm_cpp/third_party/
+/web_vllm_cpp/llama_buildsrc/
+
+# ============================================================
+# 编译产物 / 构建中间文件
+# ============================================================
+build/
+output/
+output_cpp/
+llama_build/
+/web_vllm_rknn/firmware/
+/web_vllm_rknn/work_q35/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.d
+
+# ============================================================
+# 运行产生的数据
+# ============================================================
+/data/*
+!/data/*.py
+!/data/*.sh
+!/data/*.md
+!/data/IN1K_val/
+/data/IN1K_val/*
+!/data/IN1K_val/imagenet2012_mapclsloc.txt
+/web/data/
+/web_vllm_cpp/data/
+/web_vllm/data/
+*.bak
+detection_log.json
+
+# ============================================================
+# Python / 系统缓存
+# ============================================================
+__pycache__/
+.ipynb_checkpoints/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.cache/
+*.log
+.DS_Store

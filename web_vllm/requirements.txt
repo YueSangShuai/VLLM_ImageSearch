@@ -1,0 +1,14 @@
+flask>=2.0.0
+flask-cors>=3.0.0
+opencv-python>=4.5.0
+torch>=2.6.0
+torchvision>=0.21.0
+transformers>=4.53.0,<5.0.0
+accelerate>=1.0.0
+sentence-transformers>=3.0.0
+huggingface-hub>=0.34.0
+safetensors>=0.4.5
+Pillow>=9.0.0
+numpy>=1.21.0
+ultralytics>=8.4.50
+llama-cpp-python>=0.3.34

@@ -1,0 +1,87 @@
+# FG-CLIP Classification Training Configuration
+
+# Model configuration
+model:
+  base_model: "/data/yuesang/LLM/MARS/fg-clip"
+  model_name_or_path: "/data/yuesang/LLM/MARS/fg-clip"
+  from_openai: true
+
+# Data configuration (space-separated paths)
+data:
+  train_jsonfiles:
+    - /data/yuesang/person_data/SYNTH-PEDES/json/train_new_processed.json
+    - /data/yuesang/person_data/MARS/json/val_new_processed.json
+    - /data/yuesang/person_data/MARS/json/train_new_processed.json
+    - /data/yuesang/person_data/PAB/json/val_new_processed.json
+    - /data/yuesang/person_data/PAB/json/train_new_processed.json
+    - /data/yuesang/person_data/pa100k/json/train_new_processed.json
+    - /data/yuesang/person_data/19w/json/train_new_relabel.json
+    - /data/yuesang/person_data/T4/V1/json/train_new_relabel.json
+    - /data/yuesang/person_data/T4/V2/json/train_new_relabel.json
+  val_jsonfiles:
+    - /data/yuesang/person_data/pa100k/json/test_new_processed.json
+    - /data/yuesang/person_data/pa100k/json/val_new_processed.json
+    - /data/yuesang/person_data/19w/json/val_new_relabel.json
+    - /data/yuesang/person_data/T4/V1/json/val_new_relabel.json
+  image_root: ""
+
+# Classifier configuration
+classifier:
+  yaml_path: "./configs/classifier_config.yaml"
+
+# Training configuration
+training:
+  output_dir: "./checkpoints/fgclip-classification"
+  num_epochs: 10
+  per_device_train_batch_size: 64
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1
+  learning_rate: 1e-6
+  weight_decay: 0.001
+  warmup_steps: 200
+  lr_scheduler_type: "cosine"
+  evaluation_strategy: "no"
+  save_strategy: "epoch"
+  save_steps: 5000
+  save_total_limit: 6
+  logging_steps: 1
+  dataloader_num_workers: 8
+  dataloader_pin_memory: true
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+
+# Freezing options
+freeze:
+  vision: true
+  text: true
+
+# Classification options
+classification:
+  use_classification: true
+  classification_loss_weight: 1.0
+
+# Bbox options (set to False for classification training)
+bbox:
+  add_box_loss: false
+  use_hard_neg: false
+
+# Model architecture
+model_arch:
+  base_image_size: 224
+  base_seq_length: 77
+  max_seq_length: 248
+  save_safetensors: true
+
+# Other options
+other:
+  lazy_preprocess: true
+  report_to: "none"
+  freeze_vision: true
+  freeze_text: true
+  skip_invalid_labels: true
+
+# DeepSpeed configuration
+deepspeed:
+  config_path: "./scripts/zero2.json"
+  train_use_word_size: 1

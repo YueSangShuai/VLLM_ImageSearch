@@ -1,0 +1,9 @@
+/data/yuesang/person_data/SYNTH-PEDES/json/train_new_processed.json
+/data/yuesang/person_data/MARS/json/val_new_processed.json
+/data/yuesang/person_data/MARS/json/train_new_processed.json
+/data/yuesang/person_data/PAB/json/val_new_processed.json
+/data/yuesang/person_data/PAB/json/train_new_processed.json
+/data/yuesang/person_data/pa100k/json/train_new_processed.json
+/data/yuesang/person_data/19w/json/train_new_relabel.json
+/data/yuesang/person_data/T4/V1/json/train_new_relabel.json
+/data/yuesang/person_data/T4/V2/json/train_new_relabel.json

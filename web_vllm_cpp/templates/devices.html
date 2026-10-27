@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备管理 - 多模态大模型文搜实测平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/devices" class="nav-link active">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>设备管理</h1>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>设备列表</h3>
+                <button class="btn btn-primary" onclick="showAddModal()">添加设备</button>
+            </div>
+
+            <div id="deviceList" class="device-list">
+                <p class="empty-state">暂无设备，请添加</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑设备弹窗 -->
+    <div id="deviceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">添加设备</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <form id="deviceForm">
+                <input type="hidden" id="deviceId">
+
+                <div class="form-group">
+                    <label>设备名称</label>
+                    <input type="text" id="deviceName" required placeholder="例如: 门口摄像头">
+                </div>
+
+                <div class="form-group">
+                    <label>IP地址</label>
+                    <input type="text" id="deviceIp" required placeholder="例如: 192.168.1.100">
+                </div>
+
+                <div class="form-group">
+                    <label>端口</label>
+                    <input type="number" id="devicePort" required placeholder="例如: 554" value="554">
+                </div>
+
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="deviceUsername" placeholder="RTSP用户名">
+                </div>
+
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="deviceUsername" placeholder="RTSP用户名">
+                </div>
+
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="devicePassword" placeholder="RTSP密码">
+                </div>
+
+                <div class="form-group">
+                    <label>主码流路径</label>
+                    <input type="text" id="deviceMainStreamPath" placeholder="例如: /ch01" value="/ch01">
+                </div>
+
+                <div class="form-group">
+                    <label>子码流路径</label>
+                    <input type="text" id="deviceSubStreamPath" placeholder="例如: /ch01_sub" value="/ch01_sub">
+                </div>
+
+                <div class="form-group">
+                    <label>使用码流</label>
+                    <select id="deviceStreamType">
+                        <option value="main">主码流</option>
+                        <option value="sub">子码流</option>
+                    </select>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let editingId = null;
+
+        async function loadDevices() {
+            try {
+                const res = await fetch('/api/devices');
+                const devices = await res.json();
+                renderDevices(devices);
+            } catch (e) {
+                console.error('加载设备失败:', e);
+            }
+        }
+
+        // 每5秒自动刷新设备状态
+        setInterval(loadDevices, 5000);
+
+        function renderDevices(devices) {
+            const container = document.getElementById('deviceList');
+
+            if (devices.length === 0) {
+                container.innerHTML = '<p class="empty-state">暂无设备，请添加</p>';
+                return;
+            }
+
+            container.innerHTML = devices.map(d => `
+                <div class="device-item">
+                    <div class="device-info">
+                        <div class="device-name">${d.name}</div>
+                        <div class="device-details">
+                            <span>IP: ${d.ip}:${d.port}</span>
+                            <span>主码流: ${d.main_stream_path}</span>
+                            <span>子码流: ${d.sub_stream_path}</span>
+                            <span>当前: ${d.stream_type === 'main' ? '主码流' : '子码流'}</span>
+                            <span>状态: <span class="status ${d.status}">${d.status === 'online' ? '在线' : '离线'}</span></span>
+                        </div>
+                    </div>
+                    <div class="device-actions">
+                        <button class="btn btn-small" onclick="editDevice('${d.id}')">编辑</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteDevice('${d.id}')">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showAddModal() {
+            editingId = null;
+            document.getElementById('modalTitle').textContent = '添加设备';
+            document.getElementById('deviceForm').reset();
+            document.getElementById('deviceId').value = '';
+            document.getElementById('deviceModal').style.display = 'flex';
+        }
+
+        function editDevice(id) {
+            editingId = id;
+            fetch(`/api/devices`)
+                .then(r => r.json())
+                .then(devices => {
+                    const device = devices.find(d => d.id === id);
+                    if (device) {
+                        document.getElementById('modalTitle').textContent = '编辑设备';
+                        document.getElementById('deviceId').value = device.id;
+                        document.getElementById('deviceName').value = device.name;
+                        document.getElementById('deviceIp').value = device.ip || '';
+                        document.getElementById('devicePort').value = device.port || '554';
+                        document.getElementById('deviceUsername').value = device.username || '';
+                        document.getElementById('devicePassword').value = device.password || '';
+                        document.getElementById('deviceMainStreamPath').value = device.main_stream_path || '/ch01';
+                        document.getElementById('deviceSubStreamPath').value = device.sub_stream_path || '/ch01_sub';
+                        document.getElementById('deviceStreamType').value = device.stream_type || 'main';
+                        document.getElementById('deviceModal').style.display = 'flex';
+                    }
+                });
+        }
+
+        function closeModal() {
+            document.getElementById('deviceModal').style.display = 'none';
+            editingId = null;
+        }
+
+        async function deleteDevice(id) {
+            if (!confirm('确定要删除这个设备吗？')) return;
+
+            const res = await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                loadDevices();
+            }
+        }
+
+        document.getElementById('deviceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const data = {
+                name: document.getElementById('deviceName').value,
+                ip: document.getElementById('deviceIp').value,
+                port: document.getElementById('devicePort').value,
+                username: document.getElementById('deviceUsername').value,
+                password: document.getElementById('devicePassword').value,
+                main_stream_path: document.getElementById('deviceMainStreamPath').value,
+                sub_stream_path: document.getElementById('deviceSubStreamPath').value,
+                stream_type: document.getElementById('deviceStreamType').value
+            };
+
+            const id = document.getElementById('deviceId').value;
+
+            if (id) {
+                // 更新
+                await fetch(`/api/devices/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } else {
+                // 添加
+                await fetch('/api/devices', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            }
+
+            closeModal();
+            loadDevices();
+        });
+
+        // 点击弹窗外部关闭
+        window.onclick = function(event) {
+            const modal = document.getElementById('deviceModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        };
+
+        loadDevices();
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# ===== 环境 A：视觉塔转换（env 名: rknn, Python 3.10）=====
+# ⚠️ 与 requirements_rkllm.txt 互斥，切勿装进同一个环境（torch / transformers 版本冲突）
+# 安装前先单装 CPU torch：
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.0+cpu torchvision==0.19.0+cpu
+rknn-toolkit2==2.5.0
+transformers==4.57.0
+tokenizers>=0.22,<0.23
+onnx==1.18.0
+numpy>=1.23.1,<=1.26.4
+protobuf<=4.25.4
+safetensors>=0.4,<0.9
+einops
+accelerate
+sentencepiece
+pillow

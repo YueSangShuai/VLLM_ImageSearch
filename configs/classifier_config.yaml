@@ -1,0 +1,289 @@
+# FG-CLIP Classification Configuration
+# Used for pedestrian attribute classification training
+
+classiffer_config:
+  open: True  # Enable classification heads
+  classes:
+    # Demographic attributes
+    Female:
+      nc: 2
+      text_en:
+        no: "the person is not female"
+        yes: "the person is female"
+    AgeOver60:
+      nc: 2
+      text_en:
+        no: "the person does not appear to be over 60 years old"
+        yes: "the person appears to be over 60 years old"
+    Age18-60:
+      nc: 2
+      text_en:
+        no: "the person does not appear to be between 18 and 60 years old"
+        yes: "the person appears to be between 18 and 60 years old"
+    AgeLess18:
+      nc: 2
+      text_en:
+        no: "the person does not appear to be under 18 years old"
+        yes: "the person appears to be under 18 years old"
+
+    # Pose attributes
+    Front:
+      nc: 2
+      text_en:
+        no: "the person is not facing the camera"
+        yes: "the person is facing the camera"
+    Side:
+      nc: 2
+      text_en:
+        no: "the person is not viewed from the side"
+        yes: "the person is viewed from the side"
+    Back:
+      nc: 2
+      text_en:
+        no: "the person is not facing away from the camera"
+        yes: "the person is facing away from the camera"
+
+    # Accessory attributes
+    Hat:
+      nc: 2
+      text_en:
+        no: "the person is not wearing a hat"
+        yes: "the person is wearing a hat"
+    Glasses:
+      nc: 2
+      text_en:
+        no: "the person is not wearing glasses"
+        yes: "the person is wearing glasses"
+    HandBag:
+      nc: 2
+      text_en:
+        no: "the person is not carrying a handbag"
+        yes: "the person is carrying a handbag"
+    ShoulderBag:
+      nc: 2
+      text_en:
+        no: "the person is not carrying a shoulder bag"
+        yes: "the person is carrying a shoulder bag"
+    Backpack:
+      nc: 2
+      text_en:
+        no: "the person is not carrying a backpack"
+        yes: "the person is carrying a backpack"
+    HoldObjectsInFront:
+      nc: 2
+      text_en:
+        no: "the person is not holding objects in front"
+        yes: "the person is holding objects in front"
+
+    # Upper clothing attributes
+    ShortSleeve:
+      nc: 2
+      text_en:
+        no: "the person is not wearing short sleeves"
+        yes: "the person is wearing short sleeves"
+    LongSleeve:
+      nc: 2
+      text_en:
+        no: "the person is not wearing long sleeves"
+        yes: "the person is wearing long sleeves"
+    UpperStride:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing does not have stripes"
+        yes: "the person's upper clothing has stripes"
+    UpperLogo:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing does not have a logo"
+        yes: "the person's upper clothing has a logo"
+    UpperPlaid:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not plaid"
+        yes: "the person's upper clothing is plaid"
+    UpperSplice:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not spliced"
+        yes: "the person's upper clothing is spliced"
+    LongCoat:
+      nc: 2
+      text_en:
+        no: "the person is not wearing a long coat"
+        yes: "the person is wearing a long coat"
+
+    # Lower clothing attributes
+    LowerStripe:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing does not have stripes"
+        yes: "the person's lower clothing has stripes"
+    LowerPattern:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing does not have a pattern"
+        yes: "the person's lower clothing has a pattern"
+    Trousers:
+      nc: 2
+      text_en:
+        no: "the person is not wearing trousers"
+        yes: "the person is wearing trousers"
+    Shorts:
+      nc: 2
+      text_en:
+        no: "the person is not wearing shorts"
+        yes: "the person is wearing shorts"
+    Skirt&Dress:
+      nc: 2
+      text_en:
+        no: "the person is not wearing a skirt or dress"
+        yes: "the person is wearing a skirt or dress"
+    boots:
+      nc: 2
+      text_en:
+        no: "the person is not wearing boots"
+        yes: "the person is wearing boots"
+
+    # Upper clothing colors
+    ublack:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not black"
+        yes: "the person's upper clothing is black"
+    ugray:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not gray"
+        yes: "the person's upper clothing is gray"
+    ublue:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not blue"
+        yes: "the person's upper clothing is blue"
+    ugreen:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not green"
+        yes: "the person's upper clothing is green"
+    uwhite:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not white"
+        yes: "the person's upper clothing is white"
+    upurple:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not purple"
+        yes: "the person's upper clothing is purple"
+    ured:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not red"
+        yes: "the person's upper clothing is red"
+    ubrown:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not brown"
+        yes: "the person's upper clothing is brown"
+    uyellow:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not yellow"
+        yes: "the person's upper clothing is yellow"
+    upink:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not pink"
+        yes: "the person's upper clothing is pink"
+    uorange:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not orange"
+        yes: "the person's upper clothing is orange"
+    ubeige:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not beige"
+        yes: "the person's upper clothing is beige"
+    ustriped_color:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not striped"
+        yes: "the person's upper clothing is striped"
+    umulticolor:
+      nc: 2
+      text_en:
+        no: "the person's upper clothing is not multicolored"
+        yes: "the person's upper clothing is multicolored"
+
+    # Lower clothing colors
+    lwhite:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not white"
+        yes: "the person's lower clothing is white"
+    lpink:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not pink"
+        yes: "the person's lower clothing is pink"
+    lred:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not red"
+        yes: "the person's lower clothing is red"
+    lgreen:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not green"
+        yes: "the person's lower clothing is green"
+    lyellow:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not yellow"
+        yes: "the person's lower clothing is yellow"
+    lpurple:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not purple"
+        yes: "the person's lower clothing is purple"
+    lbrown:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not brown"
+        yes: "the person's lower clothing is brown"
+    lblack:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not black"
+        yes: "the person's lower clothing is black"
+    lorange:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not orange"
+        yes: "the person's lower clothing is orange"
+    lblue:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not blue"
+        yes: "the person's lower clothing is blue"
+    lgray:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not gray"
+        yes: "the person's lower clothing is gray"
+    lbeige:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not beige"
+        yes: "the person's lower clothing is beige"
+    lstriped_color:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not striped"
+        yes: "the person's lower clothing is striped"
+    lmulticolor:
+      nc: 2
+      text_en:
+        no: "the person's lower clothing is not multicolored"
+        yes: "the person's lower clothing is multicolored"

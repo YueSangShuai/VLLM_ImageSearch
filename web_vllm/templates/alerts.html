@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>告警记录 - 多模态大模型文搜实测平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .alert-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .alert-table th, .alert-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .alert-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+        .alert-table tr:hover {
+            background: #f8f9fa;
+        }
+        .alert-table tr:last-child td {
+            border-bottom: none;
+        }
+        .score-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .score-high { background: #dc3545; color: white; }
+        .score-medium { background: #fd7e14; color: white; }
+        .score-low { background: #28a745; color: white; }
+        .alert-image-thumb {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .detail-modal-img {
+            max-width: 100%;
+            max-height: 70vh;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link active">告警记录</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>告警记录</h1>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>告警列表</h3>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="loadAlerts()">刷新</button>
+                    <button class="btn btn-danger" onclick="clearAlerts()">清空全部</button>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                <div class="form-group" style="margin: 0;">
+                    <input type="text" id="filterDevice" placeholder="输入设备名称..."
+                           style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 150px;"
+                           oninput="filterAlerts()">
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <input type="text" id="filterRule" placeholder="输入规则名称..."
+                           style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 150px;"
+                           oninput="filterAlerts()">
+                </div>
+                <select id="filterType" onchange="filterAlerts()" style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 140px;">
+                    <option value="">全部</option>
+                    <option value="normal">正常告警</option>
+                    <option value="highrisk">高危险</option>
+                    <option value="non_highrisk">非高危</option>
+                    <option value="lowquality">低质量</option>
+                    <option value="lowquality_safe">低质量非高危</option>
+                </select>
+                <button class="btn btn-small" onclick="clearFilters()">清除筛选</button>
+                <span style="color: #6c757d; margin-left: auto;">共 <span id="totalCount">0</span> 条记录</span>
+            </div>
+
+            <div style="overflow-x: auto;">
+                <table class="alert-table">
+                    <thead>
+                        <tr>
+                            <th>预览图</th>
+                            <th>设备名称</th>
+                            <th>规则名称</th>
+                            <th>图像描述</th>
+                            <th>匹配分数</th>
+                            <th>触发时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alertTableBody">
+                        <tr>
+                            <td colspan="6" class="empty-state">暂无告警记录</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="pagination" class="pagination" style="display: none; margin-top: 1rem;">
+                <button class="btn btn-small" onclick="prevPage()">上一页</button>
+                <input type="number" id="pageInput" min="1" style="width: 60px; padding: 0.3rem; border: 1px solid #ced4da; border-radius: 4px; text-align: center;" onkeypress="if(event.key==='Enter') jumpToPage()">
+                <button class="btn btn-small" onclick="nextPage()">下一页</button>
+                <span id="pageInfo">第 1 页</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片详情弹窗 -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>告警详情</h3>
+                <span class="close" onclick="closeImageModal()">&times;</span>
+            </div>
+            <div style="text-align: center; padding: 1rem;">
+                <img id="modalImage" class="detail-modal-img" src="" alt="告警图片">
+                <div id="modalInfo" style="margin-top: 1rem; text-align: left;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allAlerts = [];
+        let filteredAlerts = [];
+        let currentPage = 1;
+        const pageSize = 20;
+
+        async function loadAlerts() {
+            try {
+                const res = await fetch('/api/alerts');
+                allAlerts = await res.json();
+                filterAlerts();
+            } catch (e) {
+                console.error('加载告警失败:', e);
+            }
+        }
+
+        function filterAlerts(resetPage = true) {
+            const deviceText = document.getElementById('filterDevice').value.toLowerCase();
+            const ruleText = document.getElementById('filterRule').value.toLowerCase();
+            const typeFilter = document.getElementById('filterType').value;
+
+            filteredAlerts = allAlerts.filter(alert => {
+                const matchDevice = !deviceText || alert.device_name.toLowerCase().includes(deviceText);
+                const matchRule = !ruleText || alert.rule_name.toLowerCase().includes(ruleText);
+
+                let matchType = true;
+                if (typeFilter === 'highrisk') {
+                    matchType = alert.negative_higher === true;
+                } else if (typeFilter === 'non_highrisk') {
+                    matchType = alert.negative_higher !== true;
+                } else if (typeFilter === 'lowquality') {
+                    matchType = alert.low_quality === true;
+                } else if (typeFilter === 'lowquality_safe') {
+                    matchType = alert.low_quality === true && alert.negative_higher !== true;
+                } else if (typeFilter === 'normal') {
+                    matchType = alert.negative_higher !== true && alert.low_quality !== true && alert.low_quality !== undefined && alert.low_quality !== null;
+                }
+
+                return matchDevice && matchRule && matchType;
+            });
+
+            document.getElementById('totalCount').textContent = filteredAlerts.length;
+            if (resetPage) currentPage = 1;
+            // 确保页码不超出范围
+            const maxPage = Math.ceil(filteredAlerts.length / pageSize) || 1;
+            if (currentPage > maxPage) currentPage = maxPage;
+            document.getElementById('pageInput').value = currentPage;
+            renderAlerts();
+        }
+
+        function clearFilters() {
+            document.getElementById('filterDevice').value = '';
+            document.getElementById('filterRule').value = '';
+            document.getElementById('filterType').value = '';
+            filterAlerts(true);
+        }
+
+        function getScoreClass(score) {
+            if (score >= 0.5) return 'score-high';
+            if (score >= 0.3) return 'score-medium';
+            return 'score-low';
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            date.setHours(date.getHours() + 8); // 加8小时
+            return date.toLocaleString('zh-CN');
+        }
+
+        function renderAlerts() {
+            const tbody = document.getElementById('alertTableBody');
+            const pagination = document.getElementById('pagination');
+
+            if (filteredAlerts.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无告警记录</td></tr>';
+                pagination.style.display = 'none';
+                return;
+            }
+
+            const start = (currentPage - 1) * pageSize;
+            const end = start + pageSize;
+            const pageAlerts = filteredAlerts.slice(start, end);
+
+            tbody.innerHTML = pageAlerts.map(alert => {
+                const isHighRisk = alert.negative_higher === true;
+                const isLowQuality = alert.low_quality === true;
+                const scoreClass = isHighRisk ? 'score-high' : getScoreClass(alert.score);
+
+                return `
+                <tr ${isHighRisk ? 'style="background: #fff5f5;"' : ''}>
+                    <td>
+                        <img src="/data/alerts_images/${alert.image}"
+                             class="alert-image-thumb"
+                             alt="告警图"
+                             loading="lazy"
+                             onclick="showImageDetail('${alert.original_image || alert.image}', ${JSON.stringify(alert).replace(/"/g, '&quot;')})">
+                    </td>
+                    <td>${alert.device_name}</td>
+                    <td>${alert.rule_name}</td>
+                    <td style="max-width:360px;font-size:12px;line-height:1.45;">
+                        ${(alert.base_description || alert.description) ? `
+                        <details>
+                            <summary style="cursor:pointer;color:#555;">${(alert.base_description || alert.description).slice(0, 60)}${(alert.base_description || alert.description).length > 60 ? '…' : ''}</summary>
+                            <div style="margin-top:4px;color:#333;">${alert.base_description || alert.description}</div>
+                            ${alert.description_zh ? `<div style="margin-top:4px;color:#888;">${alert.description_zh}</div>` : ''}
+                            ${alert.attributes && alert.attributes.length ? `<div style="margin-top:4px;color:#2b6cb0;font-size:11px;">属性: ${alert.attributes.join(', ')}</div>` : ''}
+                        </details>` : ''}
+                    </td>
+                    <td><span class="score-badge ${scoreClass}">${(alert.score * 100).toFixed(1)}%</span>${isHighRisk ? ' ⚠️' : ''}${isLowQuality ? ' 📷低质量' : ''}</td>
+                    <td>${formatTime(alert.timestamp)}</td>
+                    <td>
+                        <button class="btn btn-small btn-danger" onclick="deleteAlert('${alert.id}')">删除</button>
+                    </td>
+                </tr>
+            `}).join('');
+
+            if (filteredAlerts.length > pageSize) {
+                pagination.style.display = 'flex';
+                document.getElementById('pageInfo').textContent =
+                    `第 ${currentPage} 页，共 ${Math.ceil(filteredAlerts.length / pageSize)} 页`;
+                document.getElementById('pageInput').value = currentPage;
+            } else {
+                pagination.style.display = 'none';
+            }
+        }
+
+        function showImageDetail(imagePath, alert) {
+            document.getElementById('modalImage').src = '/data/alerts_images/' + imagePath;
+
+            const negativeHigher = alert.negative_higher === true;
+            const bgColor = negativeHigher ? '#ffe6e6' : '#e8f5e9';
+            const borderColor = negativeHigher ? '#dc3545' : '#4caf50';
+
+            // 构建分数详情
+            let scoreDetails = '';
+            const positiveScores = alert.positive_scores || [];
+            const negativeScores = alert.negative_scores || [];
+            const positiveList = alert.positive_list || [];
+            const negativeList = alert.negative_list || [];
+
+            if (positiveScores.length > 0 || negativeScores.length > 0) {
+                let positiveHtml = '';
+                positiveScores.forEach((score, idx) => {
+                    const isBest = score === alert.score;
+                    const label = isBest ? '✓ 命中' : '';
+                    const posText = positiveList[idx] || '';
+                    positiveHtml += `<div style="margin: 0.3rem 0;">
+                        <span style="color: #6c757d;">正样本${idx + 1}:</span> "${posText}"
+                        <span class="score-badge ${negativeHigher ? 'score-high' : getScoreClass(score)}" style="margin-left: 0.5rem;">${(score * 100).toFixed(1)}%</span>
+                        ${label ? `<span style="color: ${negativeHigher ? '#dc3545' : '#28a745'}; margin-left: 0.5rem;">${label}</span>` : ''}
+                    </div>`;
+                });
+
+                let negativeHtml = '';
+                if (negativeScores.length > 0) {
+                    negativeScores.forEach((score, idx) => {
+                        const negText = negativeList[idx] || '';
+                        negativeHtml += `<div style="margin: 0.3rem 0;">
+                            <span style="color: #6c757d;">负样本${idx + 1}:</span> "${negText}"
+                            <span class="score-badge score-high" style="margin-left: 0.5rem;">${(score * 100).toFixed(1)}%</span>
+                        </div>`;
+                    });
+                }
+
+                const warningText = negativeHigher ? '<div style="color: #dc3545; font-weight: bold; margin-bottom: 0.5rem;">⚠️ 高风险: 负样本分数更高</div>' : '';
+
+                scoreDetails = `
+                    <div style="margin-top: 1rem; padding: 1rem; background: ${bgColor}; border-radius: 8px; border-left: 4px solid ${borderColor};">
+                        <h4 style="margin-bottom: 0.5rem;">匹配分数详情</h4>
+                        ${warningText}
+                        ${positiveHtml}
+                        ${negativeHtml.length > 0 ? '<hr style="margin: 0.8rem 0; border: none; border-top: 1px solid ' + (negativeHigher ? '#f5c6cb' : '#c8e6c9') + ';">' + negativeHtml : ''}
+                    </div>
+                `;
+            }
+
+            document.getElementById('modalInfo').innerHTML = `
+                <p><strong>设备名称:</strong> ${alert.device_name}</p>
+                <p><strong>规则名称:</strong> ${alert.rule_name}</p>
+                ${alert.base_description ? `
+                <details open style="margin: 0.5rem 0;">
+                    <summary style="cursor:pointer;"><strong>图像描述 (English / 中文)</strong></summary>
+                    <p style="margin:0.4rem 0 0 0;color:#333;line-height:1.5;">${alert.base_description}</p>
+                    ${alert.description_zh ? `<p style="margin:0.4rem 0 0 0;color:#666;line-height:1.5;">${alert.description_zh}</p>` : ''}
+                </details>` : ''}
+                <details open style="margin: 0.5rem 0;">
+                    <summary style="cursor:pointer;"><strong>结构化属性</strong>${alert.attributes && alert.attributes.length ? ` (${alert.attributes.length})` : ''}</summary>
+                    ${alert.attributes && alert.attributes.length ? `<p style="margin:0.4rem 0 0 0;line-height:1.8;">${alert.attributes.map(a => `<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;background:#eef2f7;border-radius:4px;font-size:13px;">${a}</span>`).join('')}</p>` : '<p style="margin:0.4rem 0 0 0;color:#999;font-size:13px;">无属性数据（旧告警，或模型未输出属性）</p>'}
+                </details>
+                ${alert.description && alert.description !== alert.base_description ? `<p><strong>规则相关描述:</strong> ${alert.description}</p>` : ''}
+                ${scoreDetails}
+                <p><strong>触发时间:</strong> ${formatTime(alert.timestamp)}</p>
+            `;
+            document.getElementById('imageModal').style.display = 'flex';
+        }
+
+        function closeImageModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        async function deleteAlert(id) {
+            if (!confirm('确定要删除这个告警吗？')) return;
+            const res = await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                allAlerts = allAlerts.filter(a => a.id !== id);
+                renderAlerts();
+            }
+        }
+
+        async function clearAlerts() {
+            if (!confirm('确定要清空所有告警记录吗？此操作不可恢复。')) return;
+            const res = await fetch('/api/alerts/clear', { method: 'POST' });
+            if (res.ok) {
+                allAlerts = [];
+                renderAlerts();
+            }
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                renderAlerts();
+            }
+        }
+
+        function nextPage() {
+            const maxPage = Math.ceil(filteredAlerts.length / pageSize) || 1;
+            if (currentPage < maxPage) {
+                currentPage++;
+                renderAlerts();
+            }
+        }
+
+        function jumpToPage() {
+            const input = document.getElementById('pageInput');
+            const targetPage = parseInt(input.value);
+            const maxPage = Math.ceil(filteredAlerts.length / pageSize) || 1;
+            if (targetPage && targetPage >= 1) {
+                currentPage = Math.min(targetPage, maxPage);
+                input.value = currentPage;
+                renderAlerts();
+            }
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target === modal) {
+                closeImageModal();
+            }
+        };
+
+        // 加载数据但不重置页码
+        async function refreshAlerts() {
+            try {
+                const res = await fetch('/api/alerts');
+                allAlerts = await res.json();
+                // 重新筛选但保持当前页码
+                filterAlerts(false);
+            } catch (e) {
+                console.error('刷新告警失败:', e);
+            }
+        }
+
+        // 自动刷新
+        setInterval(refreshAlerts, 5000);
+
+        loadAlerts();
+    </script>
+</body>
+</html>
