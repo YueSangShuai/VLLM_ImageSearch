@@ -123,7 +123,6 @@ python tools/export_fgclip_to_onnx.py --model_path /data/yuesang/LLM/MARS/fg-cli
 
 ## 已知坑
 
-- **`script.py` 是混淆的 Linux 本地提权漏洞利用代码（AF_ALG splice），与本项目无关，切勿执行，建议删除并排查来源。**
 - `fg_clip` 是指向不存在目录的坏符号链接（上游包名残留），新代码一律 `import fgclip`；根目录 `export_onnx.py` 因依赖 `fg_clip` 已失效。
 - `scripts/eval/eval_coco_boxcls.sh` 中模块名 `myclip.` 是旧包名残留，应为 `fgclip.`。
 - `fgclip/eval/shareg4v_retrieval.py` 顶部 `import torch_npu`，GPU 环境需注释掉才能跑长文本评测。
