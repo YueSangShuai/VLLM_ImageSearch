@@ -210,3 +210,4 @@ bash build_scripts/offline/fetch_offline.sh   # 有网机执行
 # → rsync 仓库 → 目标机: bash build_scripts/offline/apply_offline.sh && cpu/ 两脚本
 # 增量模式：命令前加 SKIP_CLEAN=1；代理：PROXY=xxx / PROXY=（不用）前缀
 ```
+- 2026-10-27: 新增 README.md（项目总览/构建/运行/交叉编译/离线构建速查，指向 BUILD_CHANGES 为构建权威）。
