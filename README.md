@@ -54,7 +54,7 @@ pip install -r requirements_fgclip2_minimind3v.txt
 要点：
 
 - 要求 `torch==2.6.0+cu124`、`transformers>=4.53,<5.0`。注意 `pyproject.toml` 中 pin 的 `transformers==4.41.0` 是上游遗留，**以 requirements 为准**。
-- 基座模型 `qihoo360/fg-clip-base`（224px）或 `qihoo360/fg-clip-large`；本仓库脚本硬编码的本地副本位于 `/data/yuesang/LLM/MARS/fg-clip`，换机器需自行改路径。
+- 基座模型 `qihoo360/fg-clip-base`（224px）或 `qihoo360/fg-clip-large`（https://huggingface.co/qihoo360/fg-clip-base ）；脚本中硬编码了本地副本路径，需按自己机器修改。
 - 上游 FineHARD 训练数据的下载与改名流程见 [`data/data.md`](data/data.md)。
 
 ---
@@ -71,7 +71,7 @@ bash scripts/train_classification.sh
 python scripts/run_train_classification.py --config scripts/train_classification.yaml
 ```
 
-当前配置：冻结 vision/text 主干，只训 54 个分类头 + 投影层，bf16 + ZeRO-2，输出到 `./checkpoints/fgclip-classification`。训练数据来自 `/data/yuesang/person_data/{SYNTH-PEDES,MARS,PAB,pa100k,19w,T4/V1,T4/V2}/json/*_new_*.json`（路径硬编码，需按机器修改）。
+当前配置：冻结 vision/text 主干，只训 54 个分类头 + 投影层，bf16 + ZeRO-2，输出到 `./checkpoints/fgclip-classification`。训练数据为本地行人数据集（SYNTH-PEDES、MARS、PAB、PA-100K 等的 `json/*_new_*.json`，路径硬编码在 YAML 中，需按机器修改）。
 
 属性定义在 `configs/classifier_config.yaml`：每个属性一对 yes/no 英文句子，同时用于文本侧对齐与分类头监督。
 
@@ -113,7 +113,7 @@ python split_fgclip_model.py --checkpoint ./checkpoints/fgclip-classification --
 python export_to_onnx.py
 
 # 另一条独立导出线（不依赖 fgclip 包，直接读 HF 权重，自带数值校验）
-python tools/export_fgclip_to_onnx.py --model_path /data/yuesang/LLM/MARS/fg-clip \
+python tools/export_fgclip_to_onnx.py --model_path <fg-clip 本地目录> \
     --output_dir ./onnx_exports --opset 14 --verify
 ```
 
@@ -126,7 +126,7 @@ python tools/export_fgclip_to_onnx.py --model_path /data/yuesang/LLM/MARS/fg-cli
 - `fg_clip` 是指向不存在目录的坏符号链接（上游包名残留），新代码一律 `import fgclip`；根目录 `export_onnx.py` 因依赖 `fg_clip` 已失效。
 - `scripts/eval/eval_coco_boxcls.sh` 中模块名 `myclip.` 是旧包名残留，应为 `fgclip.`。
 - `fgclip/eval/shareg4v_retrieval.py` 顶部 `import torch_npu`，GPU 环境需注释掉才能跑长文本评测。
-- 大量配置硬编码 `/data/yuesang/...` 绝对路径，迁移机器时全局搜索替换。
+- 大量配置硬编码本地绝对路径，迁移机器时全局搜索替换。
 
 ## 许可
 

@@ -13,3 +13,5 @@
 - 2026-10-26: NPU 速度对比正式版（bench_speed_q35_vs_ft2b_board.sh，同图同 prompt、双实例停机测、测完自动拉起）：单帧端到端（含加载）q35 12.0s vs ft-2B 14.9s（×1.24）；拆解=加载持平（页缓存主导）、视觉塔 q35 ×2.3、prefill ×1.5、decode 速率两者打平 ~18-19 tok/s。在线常驻场景（免加载）q35 收益约 ×1.3-1.5。坑：demo 只在 /home/web_vllm_rknn/demo，脚本必须绝对路径（首发 8 轮 5ms 空跑全废）。
 - 2026-10-26: 速度矩阵 v2（bench_speed_matrix_board.sh，mt=16/32/48/64 拟合+常驻斜率）修正先前粗估：decode ft-2B 29.0 tok/s vs q35 18.8 tok/s（ft ×1.55，此前"打平"系 q35 tokenizer 中文 1.36字/tok 的换算假象）；常驻每帧（mt=64）ft 5.09s vs q35 5.65s，按各自典型 EOS 长度折算后 ≈5.4s 几乎相同。q35 真实优势=冷启动 −37%、视觉 ×2.3、模型小 1G、文本质量更好；"resident ×1.3-1.5"结论作废。
 - 2026-10-27: 新增 README.md（总览/模型转换/固件/交叉编译部署/告警链路/坑速查）。另为 web、web_vllm、web_vllm_cpp、web_vllm_rknn_q35 及仓库根目录补写/重写 README。
+- 2026-10-27: 5 个 web* README 重写为纯操作文档（删背景/历史/结论叙述），各加「所需模型与下载」表（HF/GitHub 地址已逐一验证）。
+- 2026-10-27: README 脱敏：移除本地绝对路径/内网 IP，微调模型仅写「本地微调」，路径改占位符。
