@@ -18,6 +18,9 @@ std::vector<uint8_t> encode_jpeg(const ImageRGB &img, int quality = 95);
 // 双线性缩放到 (nw,nh)（对应 cv2.resize）
 ImageRGB resize_bilinear(const ImageRGB &src, int nw, int nh);
 
+// 等比放置到正方形画布、空白填 bg（对齐训练端 PIL expand2square：偏移 (side-d)/2 向下取整）
+ImageRGB expand2square(const ImageRGB &src, uint8_t bg = 127);
+
 // 在原图 RGB 上画绿色矩形（对应 cv2.rectangle thickness=2 color=(0,255,0) BGR）
 void draw_rect(ImageRGB &img, int x1, int y1, int x2, int y2);
 

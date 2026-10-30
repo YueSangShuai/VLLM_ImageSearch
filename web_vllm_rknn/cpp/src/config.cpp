@@ -73,10 +73,11 @@ Config Config::load() {
 
     // VLM：同名环境变量复用，值换成 RKNN/RKLLM 产物（板上路径）
     // vlm_model_path -> 视觉塔 .rknn；mmproj_path -> 语言塔 .rkllm
+    // 默认=未微调基座 Qwen3-VL-2B-Instruct（2026-10-29 起；实际运行以 run_web_rk.sh 导出为准）
     c.vlm_model_path = getenv_str("VLM_MODEL_NAME",
-        "/home/pi/output_rk3588/models/qwen3vl-ft_vision_rk3588.rknn");
+        "/home/pi/output_rk3588/models/qwen3-vl_vision_rk3588.rknn");
     c.mmproj_path = getenv_str("VLM_MMPROJ_PATH",
-        "/home/pi/output_rk3588/models/qwen3vl-ft-merged_w8a8_rk3588.rkllm");
+        "/home/pi/output_rk3588/models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm");
     c.device = getenv_str("VLM_DEVICE", "cuda:0");
     int ngl = (int)getenv_int("VLM_GGUF_N_GPU_LAYERS", -1);
     if (c.device.rfind("cpu", 0) == 0) ngl = 0;
@@ -112,11 +113,19 @@ Config Config::load() {
     c.vlm_max_new_tokens = (int)getenv_int("VLM_MAX_NEW_TOKENS", 120);
     c.vlm_temperature = getenv_double("VLM_GENERATION_TEMPERATURE", 0.0);
     c.vlm_repetition_penalty = getenv_double("VLM_REPETITION_PENALTY", 1.2);
+    c.structured_repetition_penalty =
+        getenv_double("VLM_STRUCTURED_REPETITION_PENALTY", c.vlm_repetition_penalty > 1.2
+                        ? c.vlm_repetition_penalty : 1.4);
 
     c.rule_description_enabled = getenv_bool("VLM_RULE_DESCRIPTION_ENABLED", true);
     c.rule_description_verify = getenv_bool("VLM_RULE_DESCRIPTION_VERIFY", true);
     c.rule_description_max_new_tokens = (int)getenv_int("VLM_RULE_DESCRIPTION_MAX_NEW_TOKENS", 60);
     c.rule_prompt_max_texts = (int)getenv_int("VLM_RULE_PROMPT_MAX_TEXTS", 3);
+
+    // 属性线性头（qwen_classifer/export_head.py 导出）；VLM_ATTR_HEAD_PATH=off 显式禁用
+    // （getenv_str 把空串当未设置，禁用哨兵值用 "off"）
+    c.attr_head_path = getenv_str("VLM_ATTR_HEAD_PATH", models_dir + "/attr_head.bin");
+    if (c.attr_head_path == "off") c.attr_head_path.clear();
 
     c.bge_onnx_path = getenv_str("EMBEDDING_ONNX_PATH", models_dir + "/onnx/bge-small-zh.onnx");
     c.bge_vocab_path = getenv_str("EMBEDDING_VOCAB_PATH",

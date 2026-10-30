@@ -49,6 +49,7 @@ private:
     std::string describeRuleMatch(const json & rule, const std::vector<std::string> & pos,
                                   const std::vector<std::string> & neg,
                                   const std::string & fallback, const ImageRGB & img);
+    std::string fillRulePlaceholder(const std::string & prompt) const;
     std::string buildRuleDescriptionPrompt(const json & rule, const std::vector<std::string> & pos,
                                            const std::vector<std::string> & neg) const;
     std::string buildRuleJudgePrompt(const std::vector<json> & rules) const;
@@ -75,6 +76,7 @@ private:
 
     std::string last_desc_zh_;                 // last_description_zh
     std::vector<std::string> last_attrs_;      // last_attributes
+    bool head_on_ = false;                     // 属性线性头可用：combined 不再走 VLM 结构化生成
 
     std::mutex mu_;   // updateRules(HTTP线程) 与 match(设备线程) 互斥
 };

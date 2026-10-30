@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 class VlmDescriber {
 public:
@@ -26,8 +27,15 @@ public:
 
     // 单轮生成。prompt 须已剥掉 <image>；内部在文首拼 <image> 占位符。
     // 多线程共用同一实例，内部加锁串行生成。
+    // attrs_out 非空且属性头已加载时，顺带输出本次图像的属性（锁内计算，出参归调用方）。
     std::string describe(const ImageRGB & img, const std::string & prompt,
-                         int max_new_tokens, double temperature, double repetition_penalty);
+                         int max_new_tokens, double temperature, double repetition_penalty,
+                         std::vector<std::string> * attrs_out = nullptr);
+
+    // 属性线性头（qwen_classifer 导出，可选件）。必须在构造后调用（需视觉 embed_size）。
+    // path 为空或加载失败：attrs_out 恒为空，预处理保持旧行为（拉伸 resize）。
+    void setAttrHead(const std::string & path);
+    bool attrHeadReady() const;
 
 private:
     struct Impl;

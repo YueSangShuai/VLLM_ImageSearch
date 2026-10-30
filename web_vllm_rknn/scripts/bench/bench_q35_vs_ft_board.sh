@@ -10,6 +10,7 @@ cd "$HERE"
 exec 9>/tmp/bench_q35.lock
 flock -n 9 || { echo "another bench running" >&2; exit 1; }
 pkill -x web_vllm_rknn || true
+pkill -f "[w]eb_vllm_rknn_q35" 2>/dev/null   # comm 截断15字符，-x web_vllm_rknn_q35 永不匹配；-f 需括号防自匹配
 sleep 2
 export LD_LIBRARY_PATH=./lib
 IMG="${1:-}"

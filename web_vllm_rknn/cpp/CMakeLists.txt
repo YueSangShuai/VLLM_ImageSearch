@@ -31,6 +31,7 @@ add_executable(bench_models
     src/text_embedder.cpp
     src/rknn_image_enc.cc
     src/vlm_describer.cpp
+    src/attr_head.cpp
 )
 
 add_executable(web_vllm_rknn
@@ -43,6 +44,7 @@ add_executable(web_vllm_rknn
     src/text_embedder.cpp
     src/rknn_image_enc.cc
     src/vlm_describer.cpp
+    src/attr_head.cpp
     src/matcher.cpp
     src/stream_processor.cpp
     src/monitor.cpp

@@ -124,6 +124,21 @@ ImageRGB resize_bilinear(const ImageRGB &src, int nw, int nh) {
     return dst;
 }
 
+ImageRGB expand2square(const ImageRGB &src, uint8_t bg) {
+    // 对齐训练端 PIL expand2square：画布边长 max(w,h)，粘贴偏移 (side-d)/2（整数除法即向下取整）
+    int side = std::max(src.w, src.h);
+    ImageRGB dst;
+    dst.w = dst.h = side;
+    dst.rgb.assign((size_t)side * side * 3, bg);
+    if (side == src.w && side == src.h) { dst.rgb = src.rgb; return dst; }
+    int ox = (side - src.w) / 2, oy = (side - src.h) / 2;
+    const size_t row = (size_t)src.w * 3;
+    for (int y = 0; y < src.h; y++)
+        memcpy(&dst.rgb[((size_t)(y + oy) * side + ox) * 3],
+               &src.rgb[(size_t)y * row], row);
+    return dst;
+}
+
 void draw_rect(ImageRGB &img, int x1, int y1, int x2, int y2) {
     auto put = [&](int x, int y) {
         // BGR (0,255,0) -> RGB (0,255,0)

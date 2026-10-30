@@ -8,6 +8,7 @@
 // 用法：bench_models [--image 文件或目录] [--iters N] [--warmup N]
 //                    [--vlm-max-tokens N] [--skip yolo,bge,vlm] [--help]
 // 未指定 --image 时使用合成图：YOLO 用 1280x720 全帧，VLM 用 256x256（接近线上 ROI 裁剪尺寸）。
+#include "attributes.h"
 #include "config.h"
 #include "detector.h"
 #include "frame.h"
@@ -223,10 +224,30 @@ static bool bench_bge(const Config &cfg, int iters, int warmup) {
 }
 
 // Qwen-VL：图像 + 提示词 -> 描述文本（一次调用 = 视觉编码 + prefill + decode）
+// --structured：按服务同款路径（含 repeat_penalty）跑结构化提示词，并核对合法/非法属性
+static void reportStructured(const std::string & out) {
+    static const auto & tbl = attrLookupTable();
+    std::string valid, invalid;
+    for (auto & token : split_any(out, ",，、;；/|。.！!？? \t\r\n")) {
+        std::string key = tolower_ascii(trim(token));
+        std::string nosep;
+        for (char c : key) if (c != '-' && c != '_' && c != ' ') nosep += c;
+        bool ok = tbl.count(key) || tbl.count(nosep);
+        if (ok) { if (!valid.empty()) valid += ","; valid += token; }
+        else    { if (!invalid.empty()) invalid += ","; invalid += token; }
+    }
+    printf("    合法(%zu): %s\n", valid.empty() ? 0 : split_any(valid, ",").size(), valid.c_str());
+    if (!invalid.empty())
+        printf("    ⚠️ 非法(%zu): %s\n", split_any(invalid, ",").size(), utf8_substr(invalid, 200).c_str());
+}
+
 static bool bench_vlm(const Config &cfg, const std::vector<ImageRGB> &imgs,
-                      int iters, int warmup, int max_tokens) {
-    printf("\n[3/3] Qwen-VL 图像描述 (%s)\n  mmproj: %s\n",
-           cfg.vlm_model_path.c_str(), cfg.mmproj_path.c_str());
+                      int iters, int warmup, int max_tokens, bool structured) {
+    if (structured) { iters = std::max(1, (int)imgs.size()); warmup = 0; }
+    printf("\n[3/3] Qwen-VL %s (%s)\n  mmproj: %s\n  repeat_penalty=%.2f\n",
+           structured ? "结构化属性（服务同款路径）" : "图像描述",
+           cfg.vlm_model_path.c_str(), cfg.mmproj_path.c_str(),
+           structured ? cfg.structured_repetition_penalty : cfg.vlm_repetition_penalty);
     require_file(cfg.vlm_model_path, "VLM 视觉塔 RKNN");
     require_file(cfg.mmproj_path, "VLM 语言塔 RKLLM");
     auto t0 = now_ms();
@@ -237,21 +258,39 @@ static bool bench_vlm(const Config &cfg, const std::vector<ImageRGB> &imgs,
     printf("  模型加载: %.1f ms (device=%s, n_ctx=%d)\n", ms, cfg.device.c_str(), cfg.n_ctx);
     if (!describer.ok()) throw std::runtime_error("VlmDescriber 初始化失败");
 
+    // 属性线性头（可选）：加载后每次生成顺带输出头属性，便于与 VLM 结构化对比
+    describer.setAttrHead(cfg.attr_head_path);
+    const bool head_on = describer.attrHeadReady();
+
     std::string prompt = cfg.description_prompt;
-    if (prompt.empty()) prompt = "Describe the pedestrian in the image.";
+    if (structured)
+        prompt = cfg.structured_prompt.empty() ? defaultStructuredPrompt() : cfg.structured_prompt;
+    else if (prompt.empty()) prompt = "Describe the pedestrian in the image.";
 
     Stats st;
     size_t chars_sum = 0;
     for (int i = 0; i < warmup + iters; i++) {
         const ImageRGB &img = imgs[i % imgs.size()];
         double a = now_ms();
-        std::string out = describer.describe(img, prompt, max_tokens,
-                                             cfg.vlm_temperature, cfg.vlm_repetition_penalty);
+        std::vector<std::string> head_attrs;
+        std::string out = describer.describe(img, prompt, max_tokens, cfg.vlm_temperature,
+                                             structured ? cfg.structured_repetition_penalty
+                                                        : cfg.vlm_repetition_penalty,
+                                             head_on ? &head_attrs : nullptr);
         double dt = now_ms() - a;
         if (i >= warmup) { st.add(dt); chars_sum += utf8_length(out); }
-        if (i == warmup + iters - 1)
+        if (structured || i == warmup + iters - 1)
+            printf("  [图%d %dx%d] (%.0fms)\n", i + 1, img.w, img.h, dt);
+        if (head_on) {
+            std::string j;
+            for (const auto & at : head_attrs) { if (!j.empty()) j += ","; j += at; }
+            printf("    头属性: %s\n", j.empty() ? "(无)" : j.c_str());
+        }
+        if (structured) {
+            reportStructured(out);
+        } else if (i == warmup + iters - 1)
             printf("  末次输出(%zu字): %s\n", utf8_length(out),
-                   utf8_substr(out, 80).c_str());
+                   utf8_substr(out, 400).c_str());
     }
     char extra[128];
     snprintf(extra, sizeof(extra), "   (max_tokens=%d, 输入%zu张图轮测)", max_tokens, imgs.size());
@@ -275,6 +314,8 @@ static void usage(const char *argv0) {
   --iters N           每个模型的正式计时次数（默认 3）
   --warmup N          预热次数，不计入统计（默认 1）
   --vlm-max-tokens N  VLM 计时用最大生成 token（默认取环境变量 VLM_MAX_NEW_TOKENS）
+  --structured        VLM 改跑结构化属性提示词（服务同款路径，含 repeat_penalty），
+                      每张图输出合法/非法属性核对。建议配 --skip yolo,bge
   --skip LIST         跳过模型，逗号分隔: yolo,bge,vlm（如 --skip vlm）
   --help              显示本帮助
 
@@ -287,6 +328,7 @@ EMBEDDING_VOCAB_PATH / VLM_MODEL_NAME / VLM_MMPROJ_PATH / VLM_DEVICE 等。
 int main(int argc, char **argv) {
     std::string image_arg, skip_list;
     int iters = 3, warmup = 1, vlm_max_tokens = -1;
+    bool structured = false;
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -300,6 +342,7 @@ int main(int argc, char **argv) {
         else if (a == "--iters")           iters = atoi(next("--iters").c_str());
         else if (a == "--warmup")          warmup = atoi(next("--warmup").c_str());
         else if (a == "--vlm-max-tokens")  vlm_max_tokens = atoi(next("--vlm-max-tokens").c_str());
+        else if (a == "--structured")      structured = true;
         else { fprintf(stderr, "未知参数: %s（--help 查看用法）\n", a.c_str()); return 2; }
     }
     iters = std::max(1, iters);
@@ -325,8 +368,14 @@ int main(int argc, char **argv) {
     try {
         if (!skipped("yolo"))
             det_imgs = collect_images(image_arg, 1280, 720);
-        if (!skipped("vlm"))
-            vlm_imgs = image_arg.empty() ? collect_images("", 256, 256) : det_imgs;
+        if (!skipped("vlm")) {
+            if (image_arg.empty()) {
+                vlm_imgs = collect_images("", 256, 256);
+            } else {
+                // --skip yolo 时 det_imgs 是空的；直接取会越界崩溃，需自行收集
+                vlm_imgs = det_imgs.empty() ? collect_images(image_arg, 1280, 720) : det_imgs;
+            }
+        }
     } catch (const std::exception &e) {
         fprintf(stderr, "图像输入失败: %s\n", e.what());
         return 1;
@@ -344,7 +393,7 @@ int main(int argc, char **argv) {
     } else printf("\n[2/3] BGE —— 已跳过\n");
 
     if (!skipped("vlm")) {
-        try { bench_vlm(cfg, vlm_imgs, iters, warmup, vlm_max_tokens); }
+        try { bench_vlm(cfg, vlm_imgs, iters, warmup, vlm_max_tokens, structured); }
         catch (const std::exception &e) { fprintf(stderr, "\n❌ VLM 基准失败: %s\n", e.what()); failed = true; }
     } else printf("\n[3/3] Qwen-VL —— 已跳过\n");
 

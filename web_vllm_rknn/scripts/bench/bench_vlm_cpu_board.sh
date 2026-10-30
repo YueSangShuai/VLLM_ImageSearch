@@ -7,6 +7,7 @@ cd ~/output_cpp
 exec 9>/tmp/bench_vlm_cpu.lock
 flock -n 9 || { echo "another bench already running" >&2; exit 1; }
 pkill -x web_vllm_rknn || true   # 服务进程名是 ./web_vllm_rknn，必须用 -x 精确匹配
+pkill -f "[w]eb_vllm_rknn_q35" 2>/dev/null   # comm 截断15字符，-x web_vllm_rknn_q35 永不匹配；-f 需括号防自匹配
 sleep 2
 export LD_LIBRARY_PATH=$PWD/lib:$HOME/wvc/lib
 export DETECTOR_ONNX_PATH=$PWD/models/onnx/yolov8n-dyn.onnx

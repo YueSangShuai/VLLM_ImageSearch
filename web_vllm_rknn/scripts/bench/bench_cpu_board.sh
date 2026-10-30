@@ -3,6 +3,7 @@
 set -uo pipefail
 cd ~/output_cpp
 pkill -x web_vllm_rknn || true   # 服务进程名是 ./web_vllm_rknn，-f 旧模式匹配不到
+pkill -f "[w]eb_vllm_rknn_q35" 2>/dev/null   # comm 截断15字符，-x web_vllm_rknn_q35 永不匹配；-f 需括号防自匹配
 sleep 2
 export LD_LIBRARY_PATH=$PWD/lib:$HOME/wvc/lib
 export DETECTOR_ONNX_PATH=$PWD/models/onnx/yolov8n-dyn.onnx

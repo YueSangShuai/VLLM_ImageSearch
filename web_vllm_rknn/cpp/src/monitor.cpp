@@ -24,6 +24,7 @@ Monitor::Monitor(const Config & cfg) : cfg_(cfg) {
     describer_.reset(new VlmDescriber(cfg.vlm_model_path, cfg.mmproj_path, device,
                                       cfg.n_gpu_layers, cfg.n_ctx,
                                       cfg.vlm_temperature, cfg.vlm_repetition_penalty));
+    describer_->setAttrHead(cfg.attr_head_path);   // 可选件：加载失败自动走旧路径
 
     printf("加载BGE文本向量模型: %s\n", cfg.bge_onnx_path.c_str());
     embedder_.reset(new TextEmbedder(cfg.bge_onnx_path, cfg.bge_vocab_path, cfg.bge_max_length));

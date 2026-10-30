@@ -64,6 +64,12 @@ compile_commands.json
 /web_vllm/data/
 *.bak
 detection_log.json
+/qwen_classifer/cache/
+/qwen_classifer/logs/
+/qwen_classifer/runs/
+/web_vllm_rknn_reranker/export_reranker/
+/web_vllm_rknn_reranker/calib/
+/web_vllm_rknn_reranker/cpp/models/
 
 # ============================================================
 # 本地文件，不入库

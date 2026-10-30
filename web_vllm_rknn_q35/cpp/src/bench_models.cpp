@@ -325,8 +325,14 @@ int main(int argc, char **argv) {
     try {
         if (!skipped("yolo"))
             det_imgs = collect_images(image_arg, 1280, 720);
-        if (!skipped("vlm"))
-            vlm_imgs = image_arg.empty() ? collect_images("", 256, 256) : det_imgs;
+        if (!skipped("vlm")) {
+            if (image_arg.empty()) {
+                vlm_imgs = collect_images("", 256, 256);
+            } else {
+                // --skip yolo 时 det_imgs 是空的；直接取会越界崩溃，需自行收集
+                vlm_imgs = det_imgs.empty() ? collect_images(image_arg, 1280, 720) : det_imgs;
+            }
+        }
     } catch (const std::exception &e) {
         fprintf(stderr, "图像输入失败: %s\n", e.what());
         return 1;

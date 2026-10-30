@@ -1,4 +1,5 @@
 #include "matcher.h"
+#include "attributes.h"
 #include "text_embedder.h"
 #include "util.h"
 #include "vlm_describer.h"
@@ -8,34 +9,7 @@
 #include <regex>
 #include <unordered_map>
 
-// ==================== 预定义属性表（processor.py PEDESTRIAN_ATTRIBUTES） ====================
-
-static const std::vector<std::string> PEDESTRIAN_ATTRIBUTES = {
-    "Female", "AgeOver60", "Age18-60", "AgeLess18", "Front", "Side", "Back",
-    "Hat", "Glasses", "HandBag", "ShoulderBag", "Backpack", "HoldObjectsInFront",
-    "ShortSleeve", "LongSleeve", "UpperStride", "UpperLogo", "UpperPlaid", "UpperSplice",
-    "LowerStripe", "LowerPattern", "LongCoat", "Trousers", "Shorts", "Skirt&Dress", "boots",
-    "ublack", "ugray", "ublue", "ugreen", "uwhite", "upurple", "ured", "ubrown",
-    "uyellow", "upink", "uorange", "ubeige", "ustriped_color", "umulticolor",
-    "lwhite", "lpink", "lred", "lgreen", "lyellow", "lpurple", "lbrown", "lblack",
-    "lorange", "lblue", "lgray", "lbeige", "lstriped_color", "lmulticolor",
-};
-
-// 小写 / 去分隔符两种写法都能命中；Male 由 Female 缺失时派生
-static const std::unordered_map<std::string, std::string> & attrLookup() {
-    static const std::unordered_map<std::string, std::string> tbl = [] {
-        std::unordered_map<std::string, std::string> m;
-        for (const auto & attr : PEDESTRIAN_ATTRIBUTES) {
-            m[tolower_ascii(attr)] = attr;
-            std::string nosep;
-            for (char c : attr) if (c != '-' && c != '_' && c != ' ') nosep += c;
-            m[tolower_ascii(nosep)] = attr;
-        }
-        m["male"] = "Male";
-        return m;
-    }();
-    return tbl;
-}
+// 预定义属性表见 attributes.h（与 bench_models 共用）
 
 // ==================== 通用文本工具 ====================
 
@@ -65,6 +39,17 @@ static std::string stripAllWs(const std::string & s) {
     std::vector<uint32_t> out;
     for (uint32_t cp : cps) if (!isSpaceCp(cp)) out.push_back(cp);
     return codepoints_to_utf8(out);
+}
+
+// 「无匹配」哨兵：规则条件化描述提示词下，模型判定所有规则都不满足时的唯一输出。
+// 容忍引号/句号等包装（「无匹配」。 等变体），但不接受混入其他内容的长文本。
+static bool isNoMatchSentinel(const std::string & text) {
+    std::string norm = stripAllWs(text);
+    if (norm.empty() || utf8_length(norm) > 6) return false;
+    static const char * wrappers[] = {"「", "」", "『", "』", "\"", "\"", "\"",
+                                      "。", "．", "！", "!", "：", ":", " "};
+    for (const char * w : wrappers) replace_all(norm, w, "");
+    return norm == "无匹配";
 }
 
 // 按空白切词（等价 chunk.split()）
@@ -98,15 +83,13 @@ Matcher::Matcher(VlmDescriber * describer, TextEmbedder * embedder, const Config
     rep_ = cfg.vlm_repetition_penalty;
     rule_desc_enabled_ = cfg.rule_description_enabled;
     rule_desc_verify_ = cfg.rule_description_verify;
+    head_on_ = vlm_ && vlm_->attrHeadReady();
 
     // 内置结构化提示词 = DEFAULT_STRUCTURED_PROMPT
     if (!cfg.structured_prompt.empty()) {
         structured_prompt_ = cfg.structured_prompt;
     } else {
-        structured_prompt_ =
-            "请分析这张行人图像，从以下预定义属性中找出所有存在的属性（即值为1的属性），"
-            "只输出这些属性名，用逗号分隔，不要输出任何其他文字或值为0的属性。\n"
-            "预定义属性列表：" + join(PEDESTRIAN_ATTRIBUTES, ",");
+        structured_prompt_ = defaultStructuredPrompt();
     }
 
     // 内置规则直判提示词 = DEFAULT_RULE_JUDGE_PROMPT；{rules} 缺失时回退
@@ -121,6 +104,23 @@ Matcher::Matcher(VlmDescriber * describer, TextEmbedder * embedder, const Config
     if (judge_prompt_.empty() || !contains(judge_prompt_, "{rules}")) judge_prompt_ = DEFAULT_RULE_JUDGE;
 
     description_prompt_ = (mode_ == "structured") ? structured_prompt_ : base_prompt_;
+}
+
+// 描述提示词里的 {rules} 占位符 → 当前启用规则的正样本特征清单（条件化描述）。
+// 与 judge prompt 同规：只替换第一处；无占位符时行为与旧版完全一致。
+std::string Matcher::fillRulePlaceholder(const std::string & prompt) const {
+    size_t rp = prompt.find("{rules}");
+    if (rp == std::string::npos) return prompt;
+    std::vector<std::string> lines;
+    for (const auto & rule : rules_) {
+        auto it = pos_texts_.find(getStr(rule, "id"));
+        if (it == pos_texts_.end() || it->second.empty()) continue;
+        lines.push_back(sanitizeRuleText(join(it->second, "、"), 96));
+    }
+    std::string rules_text = lines.empty() ? "（当前无启用规则）" : join(lines, "；");
+    std::string out = prompt;
+    out.replace(rp, 7, rules_text);
+    return out;
 }
 
 // ---- 文本工具实现 ----
@@ -146,7 +146,7 @@ std::string Matcher::lookupAttribute(const std::string & token) const {
     // _lookup_attribute：strip() 后去标点，再查两种写法
     std::string cleaned = trim_chars(trim(token), ".。:：`*\"'");
     if (cleaned.empty()) return "";
-    const auto & tbl = attrLookup();
+    const auto & tbl = attrLookupTable();
     auto it = tbl.find(tolower_ascii(cleaned));
     if (it != tbl.end()) return it->second;
     std::vector<uint32_t> nosep_cps;
@@ -311,8 +311,22 @@ std::string Matcher::extractVerifiedRuleDescription(const std::string & text) co
 
 std::vector<std::string> Matcher::extractStructuredAttributes(const ImageRGB & img) {
     // extract_structured_attributes：Female 缺失时派生 Male
-    std::string raw = vlm_->describe(img, structured_prompt_, structured_max_, temp_, rep_);
+    std::string raw = vlm_->describe(img, structured_prompt_, structured_max_, temp_,
+                                     cfg_.structured_repetition_penalty);
     auto attributes = extractValidAttributes(raw);
+    // 复读守卫：正常行人上衣+下装至多 2~4 个颜色属性；一次输出 ≥8 个颜色 ≈ 在抄 prompt 里的
+    // 属性列表（W8A8 低质量帧仍有概率触发，10/28 新告警实测）。判退化则整体丢弃，
+    // 规则匹配自动回退描述向量路径。
+    size_t colors = 0;
+    for (const auto & a : attributes)
+        if (a.size() > 1 && (a[0] == 'u' || a[0] == 'l') &&
+            a != "ustriped_color" && a != "umulticolor" && a != "lstriped_color" && a != "lmulticolor")
+            colors++;
+    if (colors >= 8) {
+        printf("[matcher] 结构化输出疑似复读(%zu 个颜色属性)，已丢弃: %s\n",
+               colors, utf8_substr(raw, 120).c_str());
+        return {};
+    }
     if (std::find(attributes.begin(), attributes.end(), "Female") == attributes.end()) {
         attributes.push_back("Male");
     }
@@ -322,13 +336,26 @@ std::vector<std::string> Matcher::extractStructuredAttributes(const ImageRGB & i
 std::string Matcher::describeImage(const ImageRGB & img) {
     // describe_image
     last_desc_zh_.clear();
+    last_attrs_.clear();
     if (mode_ == "structured") {
         return join(extractStructuredAttributes(img), ",");
     }
-    if (mode_ == "combined") {
+    // 头未启用：combined 先跑一次 VLM 结构化生成（旧路径）；
+    // 头已启用：属性从下面描述那次 describe 的出参顺带拿（视觉同一次前向），省一次生成
+    if (mode_ == "combined" && !head_on_) {
         last_attrs_ = extractStructuredAttributes(img);   // 先属性（符号匹配+展示），再描述（语义匹配）
     }
-    std::string description = vlm_->describe(img, description_prompt_, vlm_max_, temp_, rep_);
+    std::vector<std::string> * attrs = head_on_ ? &last_attrs_ : nullptr;
+    std::string description = vlm_->describe(img, description_prompt_, vlm_max_, temp_, rep_, attrs);
+    if (head_on_ && (mode_ == "combined" || mode_ == "description") &&
+        !description.empty()) {
+        // 与 extractStructuredAttributes 对齐：Female 缺失派生 Male（规则符号表用）
+        if (!last_attrs_.empty() &&
+            std::find(last_attrs_.begin(), last_attrs_.end(), "Female") == last_attrs_.end())
+            last_attrs_.push_back("Male");
+    } else if (head_on_) {
+        last_attrs_.clear();
+    }
     auto [en, zh] = splitBilingual(description);
     last_desc_zh_ = zh.empty() ? "" : collapseWs(zh);
     return cleanVlmDescription(en, 1200);
@@ -501,7 +528,9 @@ void Matcher::updateRules(const json & rules) {
         }
     }
 
-    description_prompt_ = (mode_ == "structured") ? structured_prompt_ : base_prompt_;
+    // 规则增删后重建描述提示词（{rules} 占位符在此注入；无占位符=原样直通）
+    description_prompt_ = fillRulePlaceholder(
+        (mode_ == "structured") ? structured_prompt_ : base_prompt_);
 }
 
 json Matcher::matchRuleDirect(const ImageRGB & img, double now) {
@@ -577,9 +606,14 @@ json Matcher::match(const ImageRGB & image) {
         detected.insert(last_attrs_.begin(), last_attrs_.end());
     }
 
+    // 规则条件化描述：提示词要求模型在任何规则特征都不存在时只输出「无匹配」。
+    // 命中该哨兵 → 向量路径视为空描述（得分 0），符号属性路径不受影响。
+    bool rule_rejected = isNoMatchSentinel(description);
+    if (rule_rejected) printf("[matcher] 规则判断不满足（模型输出「无匹配」），跳过向量匹配\n");
+
     // 结构化/混合模式：全部规则都能符号匹配时跳过图像描述向量计算
-    bool needs_embedding = true;
-    if (mode_ == "structured" || mode_ == "combined") {
+    bool needs_embedding = !rule_rejected;
+    if (!rule_rejected && (mode_ == "structured" || mode_ == "combined")) {
         needs_embedding = false;
         for (const auto & rule : rules_) {
             auto it = attr_pos_.find(getStr(rule, "id"));
@@ -695,14 +729,14 @@ json Matcher::match(const ImageRGB & image) {
         m["description"] = rule_description;
         m["base_description"] = description;
         m["description_zh"] = last_desc_zh_;
-        if (!detected.empty()) {
-            if (mode_ == "structured") {
-                json arr = json::array();   // description.split(",")
+        if (mode_ == "structured") {
+            json arr = json::array();
+            if (!detected.empty()) {   // description.split(",")
                 for (const auto & a : split_any(description, ",")) if (!a.empty()) arr.push_back(a);
-                m["attributes"] = arr;
-            } else {
-                m["attributes"] = last_attrs_;
             }
+            m["attributes"] = arr;
+        } else if (!detected.empty() || (head_on_ && !last_attrs_.empty())) {
+            m["attributes"] = last_attrs_;   // combined（符号匹配）或 description+头（仅展示）
         } else {
             m["attributes"] = json::array();
         }

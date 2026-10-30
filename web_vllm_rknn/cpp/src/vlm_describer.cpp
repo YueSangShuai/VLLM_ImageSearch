@@ -1,6 +1,7 @@
 // RKLLM C API 封装实现。生成是回调流式的：rkllm_run 阻塞至生成结束，
 // NORMAL 状态逐段回调 result->text，这里在 mu_ 持锁期间累加到 current_out_。
 #include "vlm_describer.h"
+#include "attr_head.h"
 #include "rknn_image_enc.h"
 #include "rkllm.h"
 
@@ -52,6 +53,10 @@ struct VlmDescriber::Impl {
 
     // Qwen3-VL special token
     std::string img_start, img_end, img_content;
+
+    // 属性线性头（可选，setAttrHead 加载）：启用时预处理改为 expand2square+resize（对齐训练端）
+    AttrHead head;
+    bool attr_pad = false;
 
     CallbackCtx cb_ctx;
     std::string * current_out = nullptr;
@@ -123,22 +128,41 @@ VlmDescriber::~VlmDescriber() = default;
 
 bool VlmDescriber::ok() const { return impl_->ready; }
 
+void VlmDescriber::setAttrHead(const std::string & path) {
+    if (path.empty() || !impl_->ready) return;
+    if (impl_->head.load(path, impl_->vision.model_embed_size))
+        impl_->attr_pad = true;  // 与训练端对齐：expand2square(127) -> resize 448
+}
+
+bool VlmDescriber::attrHeadReady() const { return impl_->head.ready(); }
+
 std::string VlmDescriber::describe(const ImageRGB & img, const std::string & prompt,
                                    int max_new_tokens, double temperature,
-                                   double repetition_penalty) {
+                                   double repetition_penalty,
+                                   std::vector<std::string> * attrs_out) {
     std::lock_guard<std::mutex> lock(mu_);
+    if (attrs_out) attrs_out->clear();
     if (!impl_->ready) return "";
 
-    // ROI -> 固定分辨率（与导出时的 448x448 一致；双线性，对齐 demo 的 INTER_LINEAR）
-    ImageRGB resized = (img.w == impl_->model_w && img.h == impl_->model_h)
-                           ? img
-                           : resize_bilinear(img, impl_->model_w, impl_->model_h);
+    // ROI -> 固定分辨率（与导出时的 448x448 一致；双线性，对齐 demo 的 INTER_LINEAR）。
+    // 属性头启用时先 expand2square 再加灰边（与 qwen_classifer 训练预处理逐像素对齐）。
+    ImageRGB resized = impl_->attr_pad
+                           ? resize_bilinear(expand2square(img), impl_->model_w, impl_->model_h)
+                           : (img.w == impl_->model_w && img.h == impl_->model_h
+                                  ? img
+                                  : resize_bilinear(img, impl_->model_w, impl_->model_h));
     if (resized.rgb.size() != (size_t)impl_->model_w * impl_->model_h * 3) return "";
 
     if (run_imgenc(&impl_->vision, resized.rgb.data(), impl_->embed.data()) != 0) {
         fprintf(stderr, "run_imgenc fail\n");
         return "";
     }
+
+    // 属性头：视觉 embedding 已在手，顺带算 54 属性（<1ms CPU），省一次 VLM 结构化生成
+    if (attrs_out && impl_->head.ready())
+        impl_->head.run(impl_->embed.data(), (int)impl_->n_image_tokens,
+                        impl_->vision.io_num.n_output, impl_->vision.model_embed_size,
+                        attrs_out);
 
     // <image> 占位符必须在 prompt 文首（demo 行为）
     std::string full_prompt = "<image>" + prompt;
