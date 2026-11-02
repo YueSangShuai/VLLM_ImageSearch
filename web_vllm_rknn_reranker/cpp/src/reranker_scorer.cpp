@@ -52,24 +52,34 @@ struct RerankerScorer::Impl {
     std::vector<uint8_t> last_rgb;
     bool cache_valid = false;
 
-    // run 输出（回调填充，取末 token 行）
+    // run 输出（回调填充；提取模式输出在 NORMAL 回调回传，见 rkllm_api_demo/deploy/src/llm_demo.cpp:49-66）
     double logit_yes = 0, logit_no = 0;    // logits 模式
     std::vector<float> hidden;             // hidden 模式：末 token
+    std::string out_text;                  // generate 模式：生成文本（yes/no）
+    long gen_token_id = -1;
     bool out_ok = false;
+    // 诊断计数（失败时打印一次，定位 runtime 行为）
+    int n_cb = 0;
+    bool saw_logits = false, saw_hidden = false, saw_text = false;
 
     static int cb(RKLLMResult * result, void * userdata, LLMCallState state) {
         auto * self = static_cast<Impl *>(userdata);
-        if (state == RKLLM_RUN_FINISH && result) {
-            if (result->logits.logits && result->logits.vocab_size > 0) {
-                int vocab = result->logits.vocab_size;
-                int row = (result->logits.num_tokens > 0 ? result->logits.num_tokens : 1) - 1;
-                const float * base = result->logits.logits + (size_t)row * vocab;
-                if (self->yes_id < vocab && self->no_id < vocab) {
-                    self->logit_yes = base[self->yes_id];
-                    self->logit_no = base[self->no_id];
-                    self->out_ok = true;
-                }
-            } else if (result->last_hidden_layer.hidden_states && self->use_hidden) {
+        if (!result) return 0;
+        self->n_cb++;
+        // 提取模式：logits / hidden 挂 NORMAL（FINISHED 也兜一层）
+        if (result->logits.logits && result->logits.vocab_size > 0) {
+            self->saw_logits = true;
+            int vocab = result->logits.vocab_size;
+            int row = (result->logits.num_tokens > 0 ? result->logits.num_tokens : 1) - 1;
+            const float * base = result->logits.logits + (size_t)row * vocab;
+            if (self->yes_id < vocab && self->no_id < vocab) {
+                self->logit_yes = base[self->yes_id];
+                self->logit_no = base[self->no_id];
+                self->out_ok = true;
+            }
+        } else if (result->last_hidden_layer.hidden_states && result->last_hidden_layer.embd_size > 0) {
+            self->saw_hidden = true;
+            if (self->use_hidden) {
                 int d = result->last_hidden_layer.embd_size;
                 int row = (result->last_hidden_layer.num_tokens > 0
                                ? result->last_hidden_layer.num_tokens : 1) - 1;
@@ -77,10 +87,12 @@ struct RerankerScorer::Impl {
                 self->hidden.assign(base, base + d);
                 self->out_ok = true;
             }
-        } else if (state == RKLLM_RUN_ERROR) {
-            fprintf(stderr, "reranker rkllm run error\n");
-            self->out_ok = false;
+        } else if (state == RKLLM_RUN_NORMAL && result->text) {
+            self->saw_text = true;
+            self->out_text += result->text;
+            if (result->token_id >= 0) self->gen_token_id = result->token_id;
         }
+        if (state == RKLLM_RUN_ERROR) fprintf(stderr, "reranker rkllm run error\n");
         return 0;
     }
 

@@ -8,6 +8,8 @@
 
 整体定位：**FG-CLIP 训练/导出侧 + 多端行人布控推理服务** 的 monorepo。
 
+> 📖 **深入阅读**：架构与实现细节（模型结构、Loss 设计、54 属性体系、导出管线、端侧服务谱系）见 **[技术文档 TECHNICAL.md](TECHNICAL.md)**；第三方依赖重建见 [DEPENDENCIES.md](DEPENDENCIES.md)。
+
 ---
 
 ## 目录结构
@@ -27,6 +29,8 @@ FG-CLIP/
 │                            #   qwen3vl-ft GGUF+mmproj、YOLOv8n ONNX、minimind-3v
 ├── split_models/            # split_fgclip_model.py 产物（image_model/ text_model/）
 ├── onnx_exports/            # image_model.onnx / text_model.onnx
+├── qwen_classifer/          # Qwen3-VL 视觉塔 + 线性头属性分类训练（产出板端 attr_head.bin）
+├── TECHNICAL.md             # 技术文档（架构与实现细节）
 └── DEPENDENCIES.md          # monorepo 全部第三方依赖与来源说明
 ```
 
@@ -41,6 +45,9 @@ FG-CLIP/
 | [`web_vllm_cpp/`](web_vllm_cpp/README.md) | web_vllm 的 C++17 CPU 移植（llama.cpp + ONNX Runtime） | 5003 |
 | [`web_vllm_rknn/`](web_vllm_rknn/README.md) | 向 RK3588 NPU（NanoPi R6S）的移植（RKNN + RKLLM） | 5003(板) |
 | [`web_vllm_rknn_q35/`](web_vllm_rknn_q35/README.md) | rknn 版的 Qwen3.5-0.8B 并行实验实例 | 5004(板) |
+| [`web_vllm_rknn_reranker/`](web_vllm_rknn_reranker/README.md) | rknn 版的 Qwen3-VL-Reranker 直配实验分支 | 5005(板) |
+
+服务间派生关系与各自推理链路详见 [TECHNICAL.md 第 7 节](TECHNICAL.md#7-端侧推理服务谱系web-目录群)。
 
 ---
 
