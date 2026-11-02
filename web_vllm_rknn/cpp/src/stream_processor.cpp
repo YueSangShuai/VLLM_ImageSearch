@@ -43,8 +43,9 @@ std::string device_rtsp_url_raw(const json & device) {
            "@" + getStr(device, "ip") + ":" + port + path;
 }
 
-StreamProcessor::StreamProcessor(const json & device, Detector * detector, Matcher * matcher)
-    : device_(device), detector_(detector), matcher_(matcher) {}
+StreamProcessor::StreamProcessor(const json & device, Detector * detector, Matcher * matcher,
+                                 bool debug_capture)
+    : device_(device), detector_(detector), matcher_(matcher), debug_capture_(debug_capture) {}
 
 void StreamProcessor::run() {
     // StreamProcessor.start()：ffmpeg 单帧拉取 + 指数退避重连
@@ -116,6 +117,66 @@ void StreamProcessor::processFrame(const ImageRGB & frame) {
     }
 }
 
+// VLM_DEBUG_CAPTURE=1：所有检测到的行人（无论是否命中规则）落盘 ROI/原图 + 描述快照，
+// 写入 data/debug_log.json，web /debug 页展示。图片按 日期/设备/roi|original 分目录，
+// json_store 截断 1000 条时会顺带删除被逐出的图片。
+void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & frame,
+                                   int x1, int y1, int x2, int y2, bool low_quality,
+                                   const json & matches) {
+    json snap = matcher_->lastDebugSnapshot();
+    // 未经描述路径（无规则 / rule_direct 裁判空输出等）时补一次描述生成
+    if (!snap.contains("description")) snap = matcher_->describeForDebug(person);
+
+    bool matched = matches.is_array() && !matches.empty();
+    int64_t dbg_count = now_ms() % 1000000;
+    std::string safe_device_name = sanitize_name(getStr(device_, "name"));
+    std::string today = today_str();
+
+    std::string roi_dir = g_paths->debug_dir + "/" + today + "/" + safe_device_name + "/roi";
+    std::string orig_dir = g_paths->debug_dir + "/" + today + "/" + safe_device_name + "/original";
+    std::error_code ec;
+    fs::create_directories(roi_dir, ec);
+    fs::create_directories(orig_dir, ec);
+
+    std::string img_filename = "debug_" + std::to_string(now_ms()) + "_" +
+                               std::to_string(dbg_count) + ".jpg";
+    {
+        std::ofstream f(roi_dir + "/" + img_filename, std::ios::binary);
+        auto jpg = encode_jpeg(resize_bilinear(person, 224, 224), 95);
+        f.write((const char *)jpg.data(), (std::streamsize)jpg.size());
+    }
+    {
+        ImageRGB annotated = frame;
+        draw_rect(annotated, x1, y1, x2, y2);
+        std::ofstream f(orig_dir + "/" + img_filename, std::ios::binary);
+        auto jpg = encode_jpeg(annotated, 90);
+        f.write((const char *)jpg.data(), (std::streamsize)jpg.size());
+    }
+
+    json rules = json::array();
+    if (matched) {
+        for (const auto & m : matches) {
+            rules.push_back({{"rule_name", m.value("rule_name", "")},
+                             {"score", m.value("final_score", 0.0)}});
+        }
+    }
+
+    json entry;
+    entry["timestamp"] = now_isoformat();
+    entry["device_id"] = device_.value("id", "");
+    entry["device_name"] = device_.value("name", "");
+    entry["matched"] = matched;
+    entry["matched_rules"] = rules;
+    entry["description"] = snap.value("description", "");
+    entry["description_zh"] = snap.value("description_zh", "");
+    entry["attributes"] = snap.contains("attributes") ? snap["attributes"] : json::array();
+    entry["low_quality"] = low_quality;
+    entry["image"] = today + "/" + safe_device_name + "/roi/" + img_filename;
+    entry["original_image"] = today + "/" + safe_device_name + "/original/" + img_filename;
+    entry["bbox"] = json::array({x1, y1, x2, y2});
+    append_debug_log(entry);
+}
+
 void StreamProcessor::processDetection(const Detection & det, const ImageRGB & frame) {
     // _process_detection：ROI 匹配 -> 告警落盘 -> 日志/回调
     int x1 = det.bbox[0], y1 = det.bbox[1], x2 = det.bbox[2], y2 = det.bbox[3];
@@ -126,6 +187,17 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
     bool is_low_quality = (w < 64 || h < 32);
 
     json matches = matcher_->match(person);
+
+    if (debug_capture_) {
+        try {
+            captureDebug(person, frame, x1, y1, x2, y2, is_low_quality, matches);
+        } catch (const std::exception & e) {
+            printf("调试捕获异常: %s\n", e.what());
+        } catch (...) {
+            printf("调试捕获异常\n");
+        }
+    }
+
     if (!matches.is_array() || matches.empty()) return;
 
     int64_t alert_count = now_ms() % 1000000;

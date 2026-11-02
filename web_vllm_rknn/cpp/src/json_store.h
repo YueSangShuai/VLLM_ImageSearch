@@ -12,6 +12,8 @@ struct Paths {
     std::string devices_file, rules_file, tasks_file, log_file;
     std::string alerts_dir;  // alerts_images/
     std::string alerts_history_dir;
+    std::string debug_dir;       // debug_images/（VLM_DEBUG_CAPTURE 开启时使用）
+    std::string debug_log_file;  // debug_log.json
 
     static Paths from_data_dir(const std::string &data_dir);
     std::string today_alerts_file() const;               // alerts_history/alerts_YYYY-MM-DD.json
@@ -28,4 +30,5 @@ extern Paths *g_paths;
 json load_json_array(const std::string &path);          // 缺文件/损坏返回 []
 void save_json_atomic(const std::string &path, const json &v, int indent = 2);
 void append_detection_log(const json &entry);           // 头插，截断 1000
+void append_debug_log(const json &entry);               // 头插，截断 1000，被逐条目的图片文件一并删除
 void prepend_alert(const Paths &p, const json &alert);  // 与 MonitoringManager.handle_alert 一致

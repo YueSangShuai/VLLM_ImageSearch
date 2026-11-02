@@ -48,6 +48,8 @@ cp -a -f "$RKLLM_LIB/librkllmrt.so"* "$DEPLOY/lib/"
 cp -a -f "$ORT"/lib/*.so* "$DEPLOY/lib/"
 cp -a "$VLLM/static/." "$DEPLOY/static/static/"
 cp -a "$VLLM/templates/"*.html "$DEPLOY/static/"
+# rknn 特有页面（如 debug.html 调试捕获页，依赖本项目的 /api/debug 接口，不进共享模板）
+cp -a "$HERE"/static/*.html "$DEPLOY/static/"
 # 业务数据：设备上板后用板卡自己的 rules/devices 配置，这里带上作种子
 cp -a "$VLLM/data/." "$DEPLOY/data/"
 # YOLO / BGE：上板先用 ORT-CPU 跑（Phase 1 再转 RKNN）

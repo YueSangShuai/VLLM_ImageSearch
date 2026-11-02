@@ -76,7 +76,9 @@ void Monitor::startDevice(const std::string & device_id) {
     auto runner = std::make_unique<Runner>();
     runner->matcher = std::make_unique<Matcher>(describer_.get(), embedder_.get(), cfg_);
     runner->matcher->updateRules(device_rules);
-    runner->proc = std::make_unique<StreamProcessor>(device, detector_.get(), runner->matcher.get());
+    runner->proc = std::make_unique<StreamProcessor>(device, detector_.get(), runner->matcher.get(),
+                                                     cfg_.debug_capture);
+    if (cfg_.debug_capture) printf("[%s] 🐞 调试捕获已开启（web /debug 页）\n", name.c_str());
     StreamProcessor * proc = runner->proc.get();
     proc->on_alert = [this](const json & a) { handleAlert(a); };
     StreamProcessor * raw = proc;

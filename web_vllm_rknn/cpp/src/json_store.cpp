@@ -18,6 +18,8 @@ Paths Paths::from_data_dir(const std::string &dir) {
     p.log_file = dir + "/detection_log.json";
     p.alerts_dir = dir + "/alerts_images";
     p.alerts_history_dir = dir + "/alerts_history";
+    p.debug_dir = dir + "/debug_images";
+    p.debug_log_file = dir + "/debug_log.json";
     fs::create_directories(p.alerts_dir);
     return p;
 }
@@ -68,6 +70,26 @@ void append_detection_log(const json &entry) {
     logs.insert(logs.begin(), entry);
     if (logs.size() > 1000) logs.get_ref<json::array_t&>().resize(1000);
     save_json_atomic(log_file, logs);
+}
+
+// 调试捕获日志：头插、截断 1000；被逐出的旧条目连同其 ROI/原图一起删除（防板端磁盘堆积）
+void append_debug_log(const json &entry) {
+    std::lock_guard<std::mutex> lk(g_io_lock);
+    json logs = load_json_array(g_paths->debug_log_file);
+    logs.insert(logs.begin(), entry);
+    auto & arr = logs.get_ref<json::array_t &>();
+    while (arr.size() > 1000) {
+        const json & old = arr.back();
+        for (const char * key : {"image", "original_image"}) {
+            if (old.contains(key) && old[key].is_string()) {
+                std::string rel = old[key].get<std::string>();
+                if (!rel.empty() && rel.find("..") == std::string::npos && rel[0] != '/')
+                    fs::remove(g_paths->debug_dir + "/" + rel);
+            }
+        }
+        arr.pop_back();
+    }
+    save_json_atomic(g_paths->debug_log_file, logs);
 }
 
 void prepend_alert(const Paths &p, const json &alert) {

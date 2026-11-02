@@ -25,6 +25,12 @@ public:
     // 对应 match()：返回 matches json 数组（字段名与 Python 逐一对应）
     json match(const ImageRGB & image);
 
+    // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
+    // match() 期间生成的描述快照：{description, description_zh, attributes}
+    json lastDebugSnapshot();
+    // 未走 match 描述路径（无规则/rule_direct）时补一次描述生成，供调试页展示
+    json describeForDebug(const ImageRGB & image);
+
 private:
     struct EmbMat {                      // python 的 (N, dim) ndarray
         std::vector<float> v;            // 行优先 N*dim
@@ -56,6 +62,7 @@ private:
     std::vector<json> parseMatchedRuleNames(const std::string & output,
                                             const std::vector<json> & candidates) const;
     json matchRuleDirect(const ImageRGB & img, double now);
+    json buildDebugSnapshot(const ImageRGB & img);   // 生成描述并返回快照；调用方持有 mu_
 
     VlmDescriber * vlm_;
     TextEmbedder * emb_;
@@ -76,6 +83,7 @@ private:
 
     std::string last_desc_zh_;                 // last_description_zh
     std::vector<std::string> last_attrs_;      // last_attributes
+    json dbg_snapshot_ = json::object();       // 调试捕获快照（match 每次调用先清空）
     bool head_on_ = false;                     // 属性线性头可用：combined 不再走 VLM 结构化生成
 
     std::mutex mu_;   // updateRules(HTTP线程) 与 match(设备线程) 互斥

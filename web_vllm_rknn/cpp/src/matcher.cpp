@@ -533,6 +533,30 @@ void Matcher::updateRules(const json & rules) {
         (mode_ == "structured") ? structured_prompt_ : base_prompt_);
 }
 
+// ---- 调试捕获 ----
+
+json Matcher::lastDebugSnapshot() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dbg_snapshot_;
+}
+
+json Matcher::buildDebugSnapshot(const ImageRGB & image) {
+    // 调用方需已持有 mu_
+    std::string description = describeImage(image);
+    json snap;
+    snap["description"] = description;
+    snap["description_zh"] = last_desc_zh_;
+    json attrs = json::array();
+    for (const auto & a : last_attrs_) attrs.push_back(a);
+    snap["attributes"] = attrs;
+    return snap;
+}
+
+json Matcher::describeForDebug(const ImageRGB & image) {
+    std::lock_guard<std::mutex> lk(mu_);
+    return buildDebugSnapshot(image);
+}
+
 json Matcher::matchRuleDirect(const ImageRGB & img, double now) {
     // match_rule_direct
     std::vector<json> eligible;
@@ -549,6 +573,10 @@ json Matcher::matchRuleDirect(const ImageRGB & img, double now) {
     std::string prompt = buildRuleJudgePrompt(eligible);
     std::string output = vlm_->describe(img, prompt, judge_max_, temp_, rep_);
     std::string judge_output = collapseWs(output);
+    // 调试快照：直判模式无独立描述，记录裁判输出
+    dbg_snapshot_ = json{{"description", judge_output},
+                         {"description_zh", ""},
+                         {"attributes", json::array()}};
     auto matched = parseMatchedRuleNames(output, eligible);
     if (matched.empty()) {
         if (!judge_output.empty()) printf("规则直判未命中（模型输出: %s）\n", judge_output.c_str());
@@ -586,7 +614,12 @@ json Matcher::match(const ImageRGB & image) {
     std::lock_guard<std::mutex> lk(mu_);
     // match：符号匹配（属性规则）+ BGE 向量匹配（自然语言规则）
     json empty = json::array();
-    if (rules_.empty()) return empty;
+    dbg_snapshot_ = json::object();   // 调试快照按图作废，防止上一帧串图
+    if (rules_.empty()) {
+        // 调试捕获开启且无规则：仍生成一次描述供 /debug 展示（正常路径零开销不受影响）
+        if (cfg_.debug_capture) dbg_snapshot_ = buildDebugSnapshot(image);
+        return empty;
+    }
 
     double now = std::chrono::duration<double>(
                      std::chrono::system_clock::now().time_since_epoch()).count();
@@ -594,16 +627,31 @@ json Matcher::match(const ImageRGB & image) {
     if (rule_emb_.empty()) return empty;
 
     std::string description = describeImage(image);
-    if (description.empty()) {
-        printf("VLM描述为空，跳过本次匹配\n");
-        return empty;
-    }
 
     std::set<std::string> detected;
     if (mode_ == "structured") {
         for (const auto & a : split_any(description, ",")) if (!a.empty()) detected.insert(a);
     } else if (mode_ == "combined") {
         detected.insert(last_attrs_.begin(), last_attrs_.end());
+    }
+
+    // 调试快照：本帧描述/中文描述/属性（未命中规则的检测也能在 /debug 页看到）
+    {
+        dbg_snapshot_ = json::object();
+        dbg_snapshot_["description"] = description;
+        dbg_snapshot_["description_zh"] = last_desc_zh_;
+        json attrs = json::array();
+        if (!detected.empty()) {
+            for (const auto & a : detected) attrs.push_back(a);
+        } else {
+            for (const auto & a : last_attrs_) attrs.push_back(a);   // description 模式+线性头
+        }
+        dbg_snapshot_["attributes"] = attrs;
+    }
+
+    if (description.empty()) {
+        printf("VLM描述为空，跳过本次匹配\n");
+        return empty;
     }
 
     // 规则条件化描述：提示词要求模型在任何规则特征都不存在时只输出「无匹配」。

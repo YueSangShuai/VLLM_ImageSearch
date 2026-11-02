@@ -57,6 +57,17 @@ static bool safe_relpath(const std::string & s) {
     return !s.empty() && s.find("..") == std::string::npos && s[0] != '/';
 }
 
+// 调试捕获开启时，在页面导航最后一个链接后追加 /debug 入口
+//（导航 html 在 web_vllm_cpp/templates 共享，不在本项目源码里改）
+static void injectDebugNavLink(std::string & html) {
+    size_t nav = html.find("</nav>");
+    if (nav == std::string::npos) return;
+    size_t a = html.rfind("</a>", nav);
+    if (a == std::string::npos) return;
+    a += 4;
+    html.insert(a, "\n            <a href=\"/debug\" class=\"nav-link\">调试捕获</a>");
+}
+
 // 与 app.py test_rtsp_connection 对齐：主码流 + URL 编码，能取到 1 帧即 online
 static std::string test_rtsp_connection(const json & device) {
     std::string port = device.value("port", std::string("554"));
@@ -129,6 +140,8 @@ void Server::setup_routes() {
         return [this, name](const httplib::Request &, httplib::Response & res) {
             std::string html = read_file(cfg_.static_dir + "/" + name + ".html");
             if (html.empty()) { res.status = 404; res.set_content("Not Found", "text/plain"); return; }
+            // 调试捕获开启时给公共导航注入 /debug 入口（模板与 web_vllm_cpp 共用，源码不动）
+            if (cfg_.debug_capture && name != "debug") injectDebugNavLink(html);
             res.set_content(html, "text/html; charset=utf-8");
         };
     };
@@ -136,6 +149,7 @@ void Server::setup_routes() {
     svr_.Get("/devices", page("devices"));
     svr_.Get("/rules", page("rules"));
     svr_.Get("/alerts", page("alerts"));
+    svr_.Get("/debug", page("debug"));
 
     // 静态资源：/static/<path> -> static_dir/static/<path>
     svr_.Get("/static/(.*)", [this](const httplib::Request & req, httplib::Response & res) {
@@ -476,6 +490,40 @@ void Server::setup_routes() {
         res_json(res, {{"success", true}});
     });
 
+    // ==================== 调试捕获（VLM_DEBUG_CAPTURE）====================
+    svr_.Get("/api/debug", [](const httplib::Request & req, httplib::Response & res) {
+        json logs = load_json_array(g_paths->debug_log_file);
+        // ?limit=N 截断（默认全部，最新在前），前端分页可选
+        std::string limit_s = req.get_param_value("limit");
+        if (!limit_s.empty()) {
+            try {
+                size_t limit = (size_t)std::stoul(limit_s);
+                if (logs.is_array() && logs.size() > limit)
+                    logs.get_ref<json::array_t &>().resize(limit);
+            } catch (...) {}
+        }
+        res_json(res, logs);
+    });
+
+    svr_.Post("/api/debug/clear", [](const httplib::Request &, httplib::Response & res) {
+        // 清空日志并尽量清掉调试图片目录（板端磁盘友好）
+        std::error_code ec;
+        if (fs::exists(g_paths->debug_dir, ec)) fs::remove_all(g_paths->debug_dir, ec);
+        fs::create_directories(g_paths->debug_dir, ec);
+        save_json_atomic(g_paths->debug_log_file, json::array());
+        res_json(res, {{"success", true}});
+    });
+
+    // 调试图片（与告警图同款 1 小时缓存）
+    svr_.Get("/data/debug_images/(.*)", [this](const httplib::Request & req, httplib::Response & res) {
+        std::string rel = req.matches[1];
+        if (!safe_relpath(rel)) { res.status = 404; return; }
+        std::string body = read_file(g_paths->debug_dir + "/" + rel);
+        if (body.empty()) { res.status = 404; return; }
+        res.set_header("Cache-Control", "public, max-age=3600");
+        res.set_content(body, "image/jpeg");
+    });
+
     // 告警图片（1 小时浏览器缓存，对齐 app.py serve_alert_image）
     svr_.Get("/data/alerts_images/(.*)", [this](const httplib::Request & req, httplib::Response & res) {
         std::string rel = req.matches[1];
@@ -510,6 +558,7 @@ void Server::setup_routes() {
         json out;
         out["running"] = monitor_->isRunning();
         out["device_count"] = monitor_->deviceCount();
+        out["debug_capture"] = cfg_.debug_capture;
         out["model"] = model;
         res_json(res, out);
     });

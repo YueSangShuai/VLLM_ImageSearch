@@ -15,7 +15,8 @@ std::string device_rtsp_url_raw(const json & device);
 
 class StreamProcessor {
 public:
-    StreamProcessor(const json & device, Detector * detector, Matcher * matcher);
+    StreamProcessor(const json & device, Detector * detector, Matcher * matcher,
+                    bool debug_capture = false);
 
     void run();          // 设备线程主循环（对应 python start()）
     void stop();
@@ -26,9 +27,13 @@ public:
 private:
     void processFrame(const ImageRGB & frame);
     void processDetection(const Detection & det, const ImageRGB & frame);
+    void captureDebug(const ImageRGB & person, const ImageRGB & frame,
+                      int x1, int y1, int x2, int y2, bool low_quality,
+                      const json & matches);   // VLM_DEBUG_CAPTURE：无论命中与否全部落盘
 
     json device_;
     Detector * detector_;
     Matcher * matcher_;
+    bool debug_capture_ = false;
     std::atomic<bool> running_{false};
 };

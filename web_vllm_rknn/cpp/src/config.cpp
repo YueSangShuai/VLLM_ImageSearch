@@ -132,6 +132,9 @@ Config Config::load() {
         "/data/yuesang/LLM/FG-CLIP/models/bge-small-zh-v1.5/vocab.txt");
     // BGE 官方检索用法：query 侧加指令前缀，doc 侧不加（非对称）。置空回到对称。
     c.embed_query_prefix = getenv_str("BGE_QUERY_PREFIX", "为这个句子生成表示以用于检索相关文章：");
+
+    // 调试捕获开关（web /debug 页）；默认关闭
+    c.debug_capture = getenv_bool("VLM_DEBUG_CAPTURE", false);
     c.yolo_onnx_path = getenv_str("DETECTOR_ONNX_PATH", models_dir + "/onnx/yolov8n-dyn.onnx");
 
     return c;

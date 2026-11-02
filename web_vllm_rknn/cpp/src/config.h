@@ -54,6 +54,10 @@ struct Config {
     // 置空 = 对称编码（旧行为）。加前缀会整体抬升/移动分数，需重校 threshold。
     std::string embed_query_prefix;
 
+    // 调试捕获：VLM_DEBUG_CAPTURE=1 时，所有检测到的行人（无论是否命中规则）
+    // 都存图 + 描述进 data/debug_log.json，web /debug 页查看。默认关闭。
+    bool debug_capture = false;
+
     // 检测
     std::string yolo_onnx_path;
     int detector_input = 640;

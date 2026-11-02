@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>调试捕获 - 多模态大模型文搜实测平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .debug-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .debug-table th, .debug-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: top;
+        }
+        .debug-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+        .debug-table tr:hover { background: #f8f9fa; }
+        .debug-table tr:last-child td { border-bottom: none; }
+        .debug-image-thumb {
+            width: 70px;
+            height: 70px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .detail-modal-img {
+            max-width: 100%;
+            max-height: 70vh;
+            border-radius: 8px;
+        }
+        .hit-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .hit-yes { background: #dc3545; color: white; }
+        .hit-no { background: #e9ecef; color: #6c757d; }
+        .attr-chip {
+            display: inline-block;
+            padding: 2px 8px;
+            margin: 2px 4px 2px 0;
+            background: #eef2f7;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+            <a href="/debug" class="nav-link active">调试捕获</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>调试捕获</h1>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>检测捕获列表</h3>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="loadEntries(true)">刷新</button>
+                    <button class="btn btn-danger" onclick="clearEntries()">清空全部</button>
+                </div>
+            </div>
+
+            <p style="color:#6c757d; font-size: 13px; margin-top: 0;">
+                开关：<code>VLM_DEBUG_CAPTURE=1</code>（run_web_rk.sh 中设置后重启服务生效）。
+                开启后所有检测到的行人（无论是否命中规则）都会推送到这里，仅保留最新 1000 条。
+            </p>
+
+            <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="filterDevice" placeholder="输入设备名称..."
+                       style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 150px;"
+                       oninput="filterEntries()">
+                <select id="filterHit" onchange="filterEntries()" style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 130px;">
+                    <option value="">全部检测</option>
+                    <option value="hit">仅命中规则</option>
+                    <option value="miss">仅未命中</option>
+                </select>
+                <label style="display:flex; align-items:center; gap:0.4rem; color:#495057;">
+                    <input type="checkbox" id="autoRefresh" checked> 自动刷新(5s)
+                </label>
+                <span style="color: #6c757d; margin-left: auto;">共 <span id="totalCount">0</span> 条记录</span>
+            </div>
+
+            <div id="switchHint" style="display:none; margin-bottom:1rem; padding:0.8rem 1rem; background:#fff3cd; border:1px solid #ffeeba; border-radius:6px; color:#856404;">
+                调试捕获开关当前未开启（VLM_DEBUG_CAPTURE=0），服务不会新增捕获记录。
+            </div>
+
+            <div style="overflow-x: auto;">
+                <table class="debug-table">
+                    <thead>
+                        <tr>
+                            <th>ROI 图</th>
+                            <th>设备</th>
+                            <th>VLM 描述</th>
+                            <th>属性</th>
+                            <th>命中规则</th>
+                            <th>时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="debugTableBody">
+                        <tr><td colspan="6" class="empty-state">暂无捕获记录</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="pagination" style="display: none; margin-top: 1rem; align-items: center; gap: 0.5rem;">
+                <button class="btn btn-small" onclick="prevPage()">上一页</button>
+                <input type="number" id="pageInput" min="1" style="width: 60px; padding: 0.3rem; border: 1px solid #ced4da; border-radius: 4px; text-align: center;" onkeypress="if(event.key==='Enter') jumpToPage()">
+                <button class="btn btn-small" onclick="nextPage()">下一页</button>
+                <span id="pageInfo">第 1 页</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片详情弹窗 -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>检测详情</h3>
+                <span class="close" onclick="closeImageModal()">&times;</span>
+            </div>
+            <div style="text-align: center; padding: 1rem;">
+                <img id="modalImage" class="detail-modal-img" src="" alt="原图画框">
+                <div style="margin-top: 0.5rem;">
+                    <img id="modalRoi" style="max-width: 240px; border-radius: 8px;" src="" alt="ROI">
+                </div>
+                <div id="modalInfo" style="margin-top: 1rem; text-align: left;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allEntries = [];
+        let filteredEntries = [];
+        let currentPage = 1;
+        const pageSize = 20;
+
+        async function loadEntries(resetPage = true) {
+            try {
+                const res = await fetch('/api/debug');
+                allEntries = await res.json();
+                filterEntries(resetPage);
+            } catch (e) {
+                console.error('加载调试记录失败:', e);
+            }
+        }
+
+        function filterEntries(resetPage = true) {
+            const deviceText = document.getElementById('filterDevice').value.toLowerCase();
+            const hitFilter = document.getElementById('filterHit').value;
+
+            filteredEntries = allEntries.filter(e => {
+                if (deviceText && !(e.device_name || '').toLowerCase().includes(deviceText)) return false;
+                if (hitFilter === 'hit' && e.matched !== true) return false;
+                if (hitFilter === 'miss' && e.matched === true) return false;
+                return true;
+            });
+
+            document.getElementById('totalCount').textContent = filteredEntries.length;
+            if (resetPage) currentPage = 1;
+            const maxPage = Math.ceil(filteredEntries.length / pageSize) || 1;
+            if (currentPage > maxPage) currentPage = maxPage;
+            renderEntries();
+        }
+
+        function formatTime(ts) {
+            const d = new Date(ts);
+            return d.toLocaleString('zh-CN');
+        }
+
+        function esc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function renderEntries() {
+            const tbody = document.getElementById('debugTableBody');
+            const pagination = document.getElementById('pagination');
+
+            if (filteredEntries.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无捕获记录</td></tr>';
+                pagination.style.display = 'none';
+                return;
+            }
+
+            const start = (currentPage - 1) * pageSize;
+            const pageEntries = filteredEntries.slice(start, start + pageSize);
+
+            tbody.innerHTML = pageEntries.map((e, i) => {
+                const idx = allEntries.indexOf(e);
+                const attrs = (e.attributes || []).map(a => `<span class="attr-chip">${esc(a)}</span>`).join('');
+                const descFull = e.description || '';
+                const zh = e.description_zh || '';
+                const preview = (zh || descFull).slice(0, 50);
+                const rules = (e.matched_rules || []).map(r => `${esc(r.rule_name)} ${(r.score * 100).toFixed(1)}%`).join('<br>');
+                return `
+                <tr ${e.matched ? 'style="background:#fff5f5;"' : ''}>
+                    <td><img src="/data/debug_images/${e.image}" class="debug-image-thumb" loading="lazy"
+                             onclick="showDetail(${idx})" alt="ROI"></td>
+                    <td>${esc(e.device_name)}${e.low_quality ? '<br><span style="color:#999;font-size:12px;">📷低质量</span>' : ''}</td>
+                    <td style="max-width:420px;font-size:12px;line-height:1.5;">
+                        ${descFull || zh ? `
+                        <details>
+                            <summary style="cursor:pointer;color:#555;">${esc(preview)}${(zh || descFull).length > 50 ? '…' : ''}</summary>
+                            ${descFull ? `<div style="margin-top:4px;color:#333;">${esc(descFull)}</div>` : ''}
+                            ${zh ? `<div style="margin-top:4px;color:#888;">${esc(zh)}</div>` : ''}
+                        </details>` : '<span style="color:#bbb;">（无描述输出）</span>'}
+                    </td>
+                    <td style="max-width:220px;">${attrs || '<span style="color:#bbb;">—</span>'}</td>
+                    <td>
+                        ${e.matched ? `<span class="hit-badge hit-yes">命中</span><div style="margin-top:4px;font-size:12px;">${rules}</div>`
+                                    : '<span class="hit-badge hit-no">未命中</span>'}
+                    </td>
+                    <td style="white-space:nowrap;font-size:13px;">${formatTime(e.timestamp)}</td>
+                </tr>`;
+            }).join('');
+
+            if (filteredEntries.length > pageSize) {
+                pagination.style.display = 'flex';
+                document.getElementById('pageInfo').textContent =
+                    `第 ${currentPage} 页，共 ${Math.ceil(filteredEntries.length / pageSize)} 页`;
+                document.getElementById('pageInput').value = currentPage;
+            } else {
+                pagination.style.display = 'none';
+            }
+        }
+
+        function showDetail(idx) {
+            const e = allEntries[idx];
+            if (!e) return;
+            document.getElementById('modalImage').src = '/data/debug_images/' + e.original_image;
+            document.getElementById('modalRoi').src = '/data/debug_images/' + e.image;
+            const attrs = (e.attributes || []).map(a => `<span class="attr-chip">${esc(a)}</span>`).join('');
+            const rules = (e.matched_rules || []).map(r =>
+                `<div style="margin:0.2rem 0;">${esc(r.rule_name)}
+                 <span class="hit-badge hit-yes" style="margin-left:0.4rem;">${(r.score * 100).toFixed(1)}%</span></div>`).join('');
+            document.getElementById('modalInfo').innerHTML = `
+                <p><strong>设备名称:</strong> ${esc(e.device_name)}　<strong>时间:</strong> ${formatTime(e.timestamp)}</p>
+                <p><strong>BBox:</strong> [${(e.bbox || []).join(', ')}]${e.low_quality ? '　<span style="color:#999;">低质量</span>' : ''}</p>
+                <div style="margin:0.5rem 0;">
+                    <strong>描述:</strong>
+                    <p style="margin:0.3rem 0 0 0;color:#333;line-height:1.5;">${esc(e.description) || '（空）'}</p>
+                    ${e.description_zh ? `<p style="margin:0.3rem 0 0 0;color:#666;line-height:1.5;">${esc(e.description_zh)}</p>` : ''}
+                </div>
+                <div style="margin:0.5rem 0;"><strong>属性:</strong><br>${attrs || '—'}</div>
+                <div style="margin:0.5rem 0;"><strong>命中规则:</strong><br>${rules || '未命中'}</div>
+            `;
+            document.getElementById('imageModal').style.display = 'flex';
+        }
+
+        function closeImageModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        async function clearEntries() {
+            if (!confirm('确定要清空全部调试捕获记录（含图片）吗？')) return;
+            const res = await fetch('/api/debug/clear', { method: 'POST' });
+            if (res.ok) {
+                allEntries = [];
+                filterEntries(true);
+            }
+        }
+
+        function prevPage() { if (currentPage > 1) { currentPage--; renderEntries(); } }
+        function nextPage() {
+            const maxPage = Math.ceil(filteredEntries.length / pageSize) || 1;
+            if (currentPage < maxPage) { currentPage++; renderEntries(); }
+        }
+        function jumpToPage() {
+            const input = document.getElementById('pageInput');
+            const t = parseInt(input.value);
+            const maxPage = Math.ceil(filteredEntries.length / pageSize) || 1;
+            if (t && t >= 1) { currentPage = Math.min(t, maxPage); input.value = currentPage; renderEntries(); }
+        }
+
+        window.onclick = function (event) {
+            if (event.target === document.getElementById('imageModal')) closeImageModal();
+        };
+
+        setInterval(() => {
+            if (document.getElementById('autoRefresh').checked &&
+                document.getElementById('imageModal').style.display !== 'flex') {
+                loadEntries(false);
+            }
+        }, 5000);
+
+        // 开关关闭提示
+        fetch('/api/monitoring/status').then(r => r.json()).then(st => {
+            if (st && st.debug_capture === false)
+                document.getElementById('switchHint').style.display = 'block';
+        }).catch(() => {});
+
+        loadEntries();
+    </script>
+</body>
+</html>
