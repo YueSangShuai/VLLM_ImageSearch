@@ -1,0 +1,569 @@
+[
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      405,
+      54,
+      466,
+      277
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012915239_915239.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012915239_915239.jpg",
+    "timestamp": "2026-10-15T05:21:55.271326"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      338,
+      0,
+      380,
+      163
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012909232_909232.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012909232_909232.jpg",
+    "timestamp": "2026-10-15T05:21:49.260668"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      283,
+      -1,
+      322,
+      150
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012792582_792582.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012792582_792582.jpg",
+    "timestamp": "2026-10-15T05:19:52.592359"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      98,
+      196,
+      204,
+      465
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012787939_787939.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012787939_787939.jpg",
+    "timestamp": "2026-10-15T05:19:47.950915"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      344,
+      0,
+      390,
+      131
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012369151_369151.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012369151_369151.jpg",
+    "timestamp": "2026-10-15T05:12:49.182217"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      291,
+      0,
+      329,
+      123
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012310805_310805.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012310805_310805.jpg",
+    "timestamp": "2026-10-15T05:11:50.819888"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      372,
+      80,
+      433,
+      274
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012187095_187095.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012187095_187095.jpg",
+    "timestamp": "2026-10-15T05:09:47.106520"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      361,
+      36,
+      419,
+      208
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012184593_184593.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012184593_184593.jpg",
+    "timestamp": "2026-10-15T05:09:44.621632"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      299,
+      0,
+      330,
+      119
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012119312_119312.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012119312_119312.jpg",
+    "timestamp": "2026-10-15T05:08:39.323845"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      218,
+      119,
+      287,
+      348
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012115735_115735.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012115735_115735.jpg",
+    "timestamp": "2026-10-15T05:08:35.767526"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      368,
+      41,
+      424,
+      220
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012004919_4918.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012004919_4918.jpg",
+    "timestamp": "2026-10-15T05:06:44.950949"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      340,
+      0,
+      380,
+      121
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792012002384_2384.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792012002384_2384.jpg",
+    "timestamp": "2026-10-15T05:06:42.395213"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      293,
+      0,
+      329,
+      86
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011988928_988928.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011988928_988928.jpg",
+    "timestamp": "2026-10-15T05:06:28.938858"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      144,
+      63,
+      205,
+      245
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011985445_985445.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011985445_985445.jpg",
+    "timestamp": "2026-10-15T05:06:25.454739"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      315,
+      0,
+      353,
+      105
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011917448_917448.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011917448_917448.jpg",
+    "timestamp": "2026-10-15T05:05:17.459054"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      387,
+      37,
+      434,
+      215
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011914175_914175.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011914175_914175.jpg",
+    "timestamp": "2026-10-15T05:05:14.197777"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      384,
+      38,
+      437,
+      224
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011811160_811160.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011811160_811160.jpg",
+    "timestamp": "2026-10-15T05:03:31.170527"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      202,
+      35,
+      266,
+      230
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011718518_718517.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011718518_718517.jpg",
+    "timestamp": "2026-10-15T05:01:58.527649"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      260,
+      0,
+      295,
+      93
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011715300_715300.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011715300_715300.jpg",
+    "timestamp": "2026-10-15T05:01:55.311367"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      424,
+      201,
+      505,
+      443
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011682506_682506.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011682506_682506.jpg",
+    "timestamp": "2026-10-15T05:01:22.535970"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      341,
+      0,
+      369,
+      98
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011676763_676763.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011676763_676763.jpg",
+    "timestamp": "2026-10-15T05:01:16.792540"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      379,
+      74,
+      483,
+      282
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011632266_632266.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011632266_632266.jpg",
+    "timestamp": "2026-10-15T05:00:32.278115"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      383,
+      123,
+      466,
+      368
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011592454_592454.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011592454_592454.jpg",
+    "timestamp": "2026-10-15T04:59:52.489208"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      321,
+      16,
+      366,
+      168
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011586318_586318.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011586318_586318.jpg",
+    "timestamp": "2026-10-15T04:59:46.343823"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      321,
+      16,
+      366,
+      168
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011583698_583698.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011583698_583698.jpg",
+    "timestamp": "2026-10-15T04:59:43.731025"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      331,
+      0,
+      361,
+      63
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011516399_516398.jpg",
+    "low_quality": true,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011516399_516398.jpg",
+    "timestamp": "2026-10-15T04:58:36.408919"
+  },
+  {
+    "attributes": [
+      "Male"
+    ],
+    "bbox": [
+      169,
+      55,
+      235,
+      240
+    ],
+    "description": "",
+    "description_zh": "",
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "image": "2026-10-15/一楼电梯厅/roi/debug_1792011510620_510619.jpg",
+    "low_quality": false,
+    "matched": false,
+    "matched_rules": [],
+    "original_image": "2026-10-15/一楼电梯厅/original/debug_1792011510620_510619.jpg",
+    "timestamp": "2026-10-15T04:58:30.629959"
+  }
+]
