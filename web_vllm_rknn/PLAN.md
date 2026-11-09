@@ -371,3 +371,37 @@
 - 修正结论：**在线常驻场景两模型单帧成本相同**；q35 的真实优势 = 冷启动/换型 −37%、视觉塔 ×2.3、
   模型文件 1.3G vs 2.3G（省盘）、以及**文本质量**（零环境句/时间戳幻觉）。"resident ×1.3-1.5"作废。
   微调 q35 若同时压长度+压幻觉，帧时间与质量可双收。
+
+### 2026-11-03（计划：RKLLM Prompt Cache 能否砍掉固定 prefill —— 验证方案）
+背景：单帧 ≈8s 里 prefill 固定税 ~5-6s（视觉塔 1.9s + LLM prefill），decode 仅 1-2s；
+描述 prompt 结构 = 固定指令 + {rules} 清单在前、<image> 在末尾，前缀（估 200-300 token）逐帧不变。
+librkllmrt 1.3.1 头文件已带 `RKLLMPromptCacheParam{save_prompt_cache, prompt_cache_path}` /
+`rkllm_load_prompt_cache()`（rkllm.h:211），我们未使用。官方示例仅演示纯文本用法，
+**多模态图文输入下 cache 边界行为无文档保证 → 先做最小验证，不通过则放弃、转降分辨率/属性头筛选路线**。
+
+验证判据（demo：tools/prefill_cache_test.cpp，板端跑，跑前停服务防 NPU/内存争用）：
+1. 正确性：同一张图 B，「全量 prompt 直接跑」vs「先对前缀 P 跑并存 cache → 载 cache → 再跑 B」
+   ——输出文本应逐字一致（贪心）；不一致 = cache 位置/边界算了错，判 fail。
+2. 收益：方案 run 的 `rkllm_run` 总耗时相对 baseline 的降幅，应 ≈ 前缀部分 prefill 时长；
+   若降幅 <1s（即 cache 只省了极少东西 / 或根本每次全量重算）判收益不足。
+3. 边界探针：cache 存「仅文字前缀」vs「文字+图像1」两种，分别换图 B 测正确性——
+   确认 cache 是否能停在 image token 之前（决定工程接法：每规则集存一次 vs 每帧重存）。
+风险/成本：demo 需交叉编译（复用 build 工具链）；prompt cache 文件格式与 runtime 版本绑定，
+{rules} 变更后缓存作废需重建（规则很少动，可接受）。通过后的接法：describer 在 updateRules
+时后台跑一次前缀存 cache，正常描述路径挂 prompt_cache_params 指向该文件。
+
+- ✅ **实测判废（2026-11-03，cpp/tools/prefill_cache_test.cpp，板端停服务、真实 debug ROI 图、贪心）**：
+  1. **文本 prefill 根本不贵，砍无可砍**：P(指令+16规则)+Q 全量 prefill+短生成 = **328ms**。
+     此前"prefill 固定税 5-6s"的账算错了——真正的每帧大项是 **rkllm 多模态 embedding 段**
+     （mm run 5.8s ≈ 图像 embedding prefill ~3s + 64-tok decode ~2.2s）+ 视觉塔 1.9s。
+  2. **文本 cache 机制本身有效**：load rc 正确（缺文件 -1/有文件 0）、文件 15.7MB、
+     载后输出上下文确实变成 [P][Q]（与无 cache 对照输出不同）——但省的是那 0.3s，无意义。
+  3. **多模态 save_prompt_cache 是静默 no-op**：run 返回 0、saved=1，cache 文件根本不落盘
+     （pcIA.bin 不存在、无报错）→ 真正想缓存的图像 embedding 部分 1.3.1 存不了。
+  4. **<image> 占位符必须在文首**：放文末不报错，图像 embedding 被静默丢弃
+     （耗时退化成纯文本、输出"无匹配"）→ "缓存文本、图像殿后"的结构也不成立。
+  5. 附带坑：`prompt_cache_path=NULL` 时 runtime 静默回退 `./prompt_cache.bin`（strings 实锤）。
+  **结论：Prompt Cache 路线关闭。** 下一杠杆改攻图像 embedding prefill（~3s）：
+  降图像 token 数（196→更少，需重标属性头）或试 extend_param.n_batch>1。
+  附带发现：贪心下同一张临界图两次 run 输出可以在「无匹配」vs「复读规则清单」间跳变
+  （3 核 NPU 调度非逐位确定性？样本太少未定论，观察告警质量时留意）。

@@ -18,8 +18,6 @@ set(RKLLM_INC "" CACHE PATH "")
 set(RKLLM_LIB_DIR "" CACHE PATH "")
 set(ORT_DIR "" CACHE PATH "")
 set(THIRD_PARTY_DIR "" CACHE PATH "")
-# YOLO 后端: onnx | rknn（BGE 恒为 ORT）
-set(WEBVLLM_BACKEND "rknn" CACHE STRING "")
 
 # 三模型耗时基准（与在线服务同一套 env）
 add_executable(bench_models
@@ -51,19 +49,9 @@ add_executable(web_vllm_rknn
     src/server.cpp
 )
 
-# 检测框打印（golden 对齐用）
-add_executable(yolo_probe
-    src/yolo_probe.cpp
-    src/frame.cpp
-    src/detector.cpp
-)
-
 find_package(Threads REQUIRED)
 
 function(configure_app_target tgt)
-if(WEBVLLM_BACKEND STREQUAL "rknn")
-    target_compile_definitions(${tgt} PRIVATE WEBVLLM_RKNN)
-endif()
 target_include_directories(${tgt} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${THIRD_PARTY_DIR}
@@ -92,4 +80,3 @@ endfunction()
 
 configure_app_target(web_vllm_rknn)
 configure_app_target(bench_models)
-configure_app_target(yolo_probe)

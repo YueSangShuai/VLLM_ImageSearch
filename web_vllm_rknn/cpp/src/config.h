@@ -18,33 +18,17 @@ struct Config {
     int port = 5003;
 
     // VLM
-    std::string vlm_model_path;       // GGUF 主模型
-    std::string mmproj_path;          // 视觉投影 GGUF
-    std::string device;               // "cuda:0"/"cpu"
-    int n_gpu_layers = -1;
-    int n_ctx = 4096;
-    std::string match_mode = "structured";  // structured | description | combined | rule_direct
+    std::string vlm_model_path;       // RKNN 视觉塔
+    std::string mmproj_path;          // RKLLM 语言塔
+    int n_ctx = 4096;                 // -> RKLLM max_context_len
+    std::string match_mode = "combined";  // description | combined
     std::string attr_head_path;             // 属性线性头 bin（qwen_classifer 导出），空=禁用
 
     std::string description_prompt;   // 已剥掉 <image>
-    std::string structured_prompt;    // 已剥掉 <image>；空串 = matcher 用内置属性列表构造
-    int structured_max_new_tokens = 128;
 
-    // rule_direct 模式
-    std::string rule_judge_prompt;    // 已剥掉 <image>；空串 = matcher 用内置默认
-    int rule_judge_max_new_tokens = 128;
     int vlm_max_new_tokens = 120;
     double vlm_temperature = 0.0;
     double vlm_repetition_penalty = 1.2;
-    // 结构化路径专用：W8A8 下 1.2 压不住属性列表复读（10/28 实测 6 张新告警 3 张全枚举），
-    // 1.4 复读消失（代价是出现列表外垃圾 token，matcher 解析时丢弃）；描述路径仍用 1.2。
-    double structured_repetition_penalty = 1.4;
-
-    // 规则二次核验
-    bool rule_description_enabled = false;
-    bool rule_description_verify = true;
-    int rule_description_max_new_tokens = 60;
-    int rule_prompt_max_texts = 3;
 
     // 嵌入模型
     std::string bge_onnx_path;
@@ -60,7 +44,6 @@ struct Config {
 
     // 检测
     std::string yolo_onnx_path;
-    int detector_input = 640;
     float det_conf = 0.5f;
     float det_iou = 0.7f;
 

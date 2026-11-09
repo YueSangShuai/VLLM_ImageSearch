@@ -83,7 +83,7 @@ static std::string test_rtsp_connection(const json & device) {
 Server::Server(const Config & cfg, Monitor * monitor) : cfg_(cfg), monitor_(monitor) {
     // flask-cors 全局允许跨域
     svr_.set_default_headers({{"Access-Control-Allow-Origin", "*"}});
-    setup_routes();
+    setup_routes();   // 并发任务队列（ThreadPool）在 setup_routes 里配置
 }
 
 Server::~Server() { stop(); }
@@ -128,6 +128,11 @@ void Server::heartbeat_loop() {
 }
 
 void Server::setup_routes() {
+    // cpp-httplib 默认单线程串行处理：任一慢 handler（如 PUT /api/tasks 等
+    // matcher 锁、读大 JSON）会冻结全部端点，前端表现为整个平台卡住。换 4 线程
+    // 任务队列后慢请求只堵自己。共享状态均有各自锁（monitor/matcher/json_store）。
+    svr_.new_task_queue = [] { return new httplib::ThreadPool(4); };
+
     // flask-cors 会自动应答 OPTIONS 预检；httplib 需显式兜底（同源前端不触发，跨源调用会）
     svr_.Options(".*", [](const httplib::Request &, httplib::Response & res) {
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -231,115 +236,13 @@ void Server::setup_routes() {
         res_json(res, {{"success", true}});
     });
 
-    // ==================== 规则管理 ====================
-    svr_.Get("/api/rules", [](const httplib::Request &, httplib::Response & res) {
-        res_json(res, load_json_array(g_paths->rules_file));
-    });
-
-    svr_.Post("/api/rules", [this](const httplib::Request & req, httplib::Response & res) {
-        json data = parse_body(req);
-        json rule;
-        rule["id"] = uuid4();
-        rule["name"] = body_str(data, "name");
-        rule["text"] = body_str(data, "text");
-        rule["positive"] = body_val(data, "positive", json::array());
-        rule["negative"] = body_val(data, "negative", json::array());
-        rule["threshold"] = body_num(data, "threshold", 0.5);
-        rule["enabled"] = body_val(data, "enabled", json(true));
-        rule["created_at"] = now_isoformat();
-
-        json rules = load_json_array(g_paths->rules_file);
-        rules.push_back(rule);
-        save_json_atomic(g_paths->rules_file, rules);
-
-        // 同步追加进所有 tasks.json 任务（与 Python 版行为一致）
-        if (fs::exists(g_paths->tasks_file)) {
-            json tasks = load_json_array(g_paths->tasks_file);
-            for (auto & task : tasks) {
-                if (!task.contains("rules") || !task["rules"].is_array())
-                    task["rules"] = json::array();
-                json tr;
-                tr["id"] = rule["id"];
-                tr["name"] = rule["name"];
-                tr["text"] = rule.value("text", "");
-                tr["positive"] = rule.value("positive", json::array());
-                tr["negative"] = rule.value("negative", json::array());
-                tr["threshold"] = rule.value("threshold", 0.5);
-                tr["score_diff"] = 0;
-                tr["enabled"] = rule.value("enabled", json(true));
-                task["rules"].push_back(tr);
-            }
-            save_json_atomic(g_paths->tasks_file, tasks);
-        }
-        monitor_->refreshRules();
-        res_json(res, rule);
-    });
-
-    svr_.Put("/api/rules/([^/]+)", [this](const httplib::Request & req, httplib::Response & res) {
-        json data = parse_body(req);
-        std::string id = req.matches[1];
-        json rules = load_json_array(g_paths->rules_file);
-        for (auto & r : rules) {
-            if (r.is_object() && r.value("id", "") == id) {
-                r["name"] = body_str(data, "name", r.value("name", ""));
-                r["text"] = body_str(data, "text", r.value("text", ""));
-                r["positive"] = data.contains("positive") ? data["positive"]
-                                                          : r.value("positive", json::array());
-                r["negative"] = data.contains("negative") ? data["negative"] : r.value("negative", json::array());
-                r["threshold"] = data.contains("threshold") ? body_num(data, "threshold", 0.5)
-                                                            : r.value("threshold", 0.5);
-                r["enabled"] = data.contains("enabled") ? body_val(data, "enabled", json(true))
-                                                        : r.value("enabled", json(true));
-                break;
-            }
-        }
-        save_json_atomic(g_paths->rules_file, rules);
-
-        // 同步更新 tasks.json 中所有引用
-        if (fs::exists(g_paths->tasks_file)) {
-            json tasks = load_json_array(g_paths->tasks_file);
-            for (auto & task : tasks) {
-                if (!task.contains("rules") || !task["rules"].is_array()) continue;
-                for (auto & r : task["rules"]) {
-                    if (r.is_object() && r.value("id", "") == id) {
-                        r["name"] = body_str(data, "name", r.value("name", ""));
-                        r["text"] = body_str(data, "text", r.value("text", ""));
-                        r["positive"] = data.contains("positive") ? data["positive"]
-                                                                  : r.value("positive", json::array());
-                        r["negative"] = data.contains("negative") ? data["negative"]
-                                                                  : r.value("negative", json::array());
-                        r["threshold"] = data.contains("threshold") ? body_num(data, "threshold", 0.5)
-                                                                    : r.value("threshold", 0.5);
-                        r["score_diff"] = data.contains("score_diff") ? body_num(data, "score_diff", 0)
-                                                                      : r.value("score_diff", 0);
-                        r["enabled"] = data.contains("enabled") ? body_val(data, "enabled", json(true))
-                                                                : r.value("enabled", json(true));
-                    }
-                }
-            }
-            save_json_atomic(g_paths->tasks_file, tasks);
-        }
-        monitor_->refreshRules();
-        res_json(res, {{"success", true}});
-    });
-
-    svr_.Delete("/api/rules/([^/]+)", [this](const httplib::Request & req, httplib::Response & res) {
-        std::string id = req.matches[1];
-        json rules = load_json_array(g_paths->rules_file);
-        json kept = json::array();
-        for (auto & r : rules)
-            if (!(r.is_object() && r.value("id", "") == id)) kept.push_back(r);
-        save_json_atomic(g_paths->rules_file, kept);
-        monitor_->refreshRules();
-        res_json(res, {{"success", true}});
-    });
-
     // ==================== 任务管理 ====================
+    // （规则随任务走 /api/tasks；独立的 /api/rules CRUD 已删——前端与板端流程均不再使用）
     svr_.Get("/api/tasks", [](const httplib::Request &, httplib::Response & res) {
         res_json(res, load_json_array(g_paths->tasks_file));
     });
 
-    svr_.Post("/api/tasks", [](const httplib::Request & req, httplib::Response & res) {
+    svr_.Post("/api/tasks", [this](const httplib::Request & req, httplib::Response & res) {
         json data = parse_body(req);
         json task;
         task["id"] = data.contains("id") && data["id"].is_string() ? data["id"] : json(uuid4());
@@ -353,6 +256,7 @@ void Server::setup_routes() {
         json tasks = load_json_array(g_paths->tasks_file);
         tasks.push_back(task);
         save_json_atomic(g_paths->tasks_file, tasks);
+        monitor_->refreshRulesAsync();
         res_json(res, task);
     });
 
@@ -380,17 +284,18 @@ void Server::setup_routes() {
             }
         }
         save_json_atomic(g_paths->tasks_file, tasks);
-        monitor_->refreshRules();
+        monitor_->refreshRulesAsync();   // 后台刷新：不同步等 match() 放 matcher 锁
         res_json(res, {{"success", true}});
     });
 
-    svr_.Delete("/api/tasks/([^/]+)", [](const httplib::Request & req, httplib::Response & res) {
+    svr_.Delete("/api/tasks/([^/]+)", [this](const httplib::Request & req, httplib::Response & res) {
         std::string id = req.matches[1];
         json tasks = load_json_array(g_paths->tasks_file);
         json kept = json::array();
         for (auto & t : tasks)
             if (!(t.is_object() && t.value("id", "") == id)) kept.push_back(t);
         save_json_atomic(g_paths->tasks_file, kept);
+        monitor_->refreshRulesAsync();   // 此前删任务不刷新，规则残留到下次重启
         res_json(res, {{"success", true}});
     });
 
@@ -481,15 +386,6 @@ void Server::setup_routes() {
         res_json(res, {{"success", true}});
     });
 
-    svr_.Get("/api/logs", [](const httplib::Request &, httplib::Response & res) {
-        res_json(res, load_json_array(g_paths->log_file));
-    });
-
-    svr_.Post("/api/logs/clear", [](const httplib::Request &, httplib::Response & res) {
-        save_json_atomic(g_paths->log_file, json::array());
-        res_json(res, {{"success", true}});
-    });
-
     // ==================== 调试捕获（VLM_DEBUG_CAPTURE）====================
     svr_.Get("/api/debug", [](const httplib::Request & req, httplib::Response & res) {
         json logs = load_json_array(g_paths->debug_log_file);
@@ -537,17 +433,13 @@ void Server::setup_routes() {
     // ==================== 监控状态 ====================
     svr_.Get("/api/monitoring/status", [this](const httplib::Request &, httplib::Response & res) {
         std::string model_name = getenv_str("VLM_MODEL_NAME", "");
-        std::string fmt = tolower_ascii(getenv_str("VLM_MODEL_FORMAT", ""));
         std::string mmproj = getenv_str("VLM_MMPROJ_PATH", "");
         auto rstrip = [](std::string s) {
             while (!s.empty() && (s.back() == '/' || s.back() == '\\')) s.pop_back();
             return s;
         };
         json model;
-        bool is_gguf = fmt == "gguf" ||
-            (model_name.size() > 5 && model_name.size() >= 5 &&
-             tolower_ascii(model_name).rfind(".gguf") == model_name.size() - 5);
-        model["type"] = is_gguf ? "GGUF" : "HuggingFace";
+        model["type"] = "RKNN/RKLLM";   // 本项目唯一后端（GGUF 路线已删）
         model["match_mode"] = tolower_ascii(getenv_str("VLM_MATCH_MODE", "combined"));
         model["model_name"] = model_name;
         model["model_basename"] = model_name.empty() ? ""

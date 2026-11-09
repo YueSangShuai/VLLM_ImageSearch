@@ -124,7 +124,7 @@ void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & fra
                                    int x1, int y1, int x2, int y2, bool low_quality,
                                    const json & matches) {
     json snap = matcher_->lastDebugSnapshot();
-    // 未经描述路径（无规则 / rule_direct 裁判空输出等）时补一次描述生成
+    // 未经描述路径（无规则等）时补一次描述生成
     if (!snap.contains("description")) snap = matcher_->describeForDebug(person);
 
     bool matched = matches.is_array() && !matches.empty();
@@ -161,12 +161,40 @@ void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & fra
         }
     }
 
+    // 逐规则得分明细（含未命中/冷却中）：落盘 + stdout 打印
+    json rule_details = snap.contains("rules") ? snap["rules"] : json::array();
+    {
+        std::string hit_s, miss_s;
+        for (const auto & d : rule_details) {
+            std::string item = d.value("rule_name", "?") + "(" +
+                               format_double(d.value("score", 0.0)) + "/" +
+                               format_double(d.value("threshold", 0.5)) + "阈)";
+            if (d.value("type", "") == "symbolic") {
+                auto missing = d.contains("missing_attrs") ? d["missing_attrs"] : json::array();
+                if (!missing.empty()) {
+                    std::string ms;
+                    for (const auto & a : missing) ms += (ms.empty() ? "" : ",") + a.get<std::string>();
+                    item += "[缺:" + ms + "]";
+                }
+            }
+            std::string st = d.value("status", "");
+            if (st == "hit") hit_s += (hit_s.empty() ? "" : " ") + item;
+            else miss_s += (miss_s.empty() ? "" : " ") + item +
+                           (st == "cooldown" ? "(冷却)" : st == "no_embedding" ? "(无向量)" : "");
+        }
+        printf("[%s] 🐞 匹配明细 | 命中: %s | 未命中: %s\n",
+               sanitize_name(getStr(device_, "name", "Unknown")).c_str(),
+               hit_s.empty() ? "无" : hit_s.c_str(),
+               miss_s.empty() ? "无" : miss_s.c_str());
+    }
+
     json entry;
     entry["timestamp"] = now_isoformat();
     entry["device_id"] = device_.value("id", "");
     entry["device_name"] = device_.value("name", "");
     entry["matched"] = matched;
     entry["matched_rules"] = rules;
+    entry["rule_details"] = rule_details;   // 全部规则得分与未命中属性（/debug 页展示）
     entry["description"] = snap.value("description", "");
     entry["description_zh"] = snap.value("description_zh", "");
     entry["attributes"] = snap.contains("attributes") ? snap["attributes"] : json::array();

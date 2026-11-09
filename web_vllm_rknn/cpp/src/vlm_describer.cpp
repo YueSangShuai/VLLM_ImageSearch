@@ -68,8 +68,7 @@ struct VlmDescriber::Impl {
 };
 
 VlmDescriber::VlmDescriber(const std::string & vision_path, const std::string & llm_path,
-                           const std::string & /*device*/, int /*n_gpu_layers*/, int n_ctx,
-                           double temperature, double repetition_penalty)
+                           int n_ctx, double temperature, double repetition_penalty)
     : impl_(new Impl) {
     impl_->vision_path = vision_path;
     impl_->llm_path = llm_path;

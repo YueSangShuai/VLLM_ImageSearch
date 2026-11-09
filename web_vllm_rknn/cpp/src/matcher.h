@@ -1,6 +1,6 @@
 #pragma once
-// 对齐 processor.py VLMTextMatcher：VLM 描述/结构化属性 + BGE 向量 / 符号匹配。
-// 四种模式：structured | description | combined | rule_direct
+// 对齐 processor.py VLMTextMatcher：VLM 描述 + BGE 向量 / 属性符号匹配。
+// 两种模式：description | combined（combined 用属性线性头）
 #include "config.h"
 #include "frame.h"
 #include "json_store.h"
@@ -26,9 +26,11 @@ public:
     json match(const ImageRGB & image);
 
     // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
-    // match() 期间生成的描述快照：{description, description_zh, attributes}
+    // match() 期间生成的描述快照：{description, description_zh, attributes,
+    // rules(逐规则得分明细：name/type/score/threshold/status/hit，symbolic 附带
+    // expected/hit_attrs/missing_attrs，semantic 附带 positive_list/positive_scores)}
     json lastDebugSnapshot();
-    // 未走 match 描述路径（无规则/rule_direct）时补一次描述生成，供调试页展示
+    // 未走 match 描述路径（无规则等）时补一次描述生成，供调试页展示
     json describeForDebug(const ImageRGB & image);
 
 private:
@@ -46,22 +48,14 @@ private:
     std::string sanitizeRuleText(const std::string & text, size_t max_len) const;
     std::pair<std::string, std::string> splitBilingual(const std::string & text) const;
     std::string cleanVlmDescription(const std::string & text, size_t max_chars) const;
-    static bool isNoMatchDescription(const std::string & text);
-    std::string extractVerifiedRuleDescription(const std::string & text) const;
 
     // ---- 业务流程 ----
-    std::vector<std::string> extractStructuredAttributes(const ImageRGB & img);
-    std::string describeImage(const ImageRGB & img);
-    std::string describeRuleMatch(const json & rule, const std::vector<std::string> & pos,
-                                  const std::vector<std::string> & neg,
-                                  const std::string & fallback, const ImageRGB & img);
-    std::string fillRulePlaceholder(const std::string & prompt) const;
-    std::string buildRuleDescriptionPrompt(const json & rule, const std::vector<std::string> & pos,
-                                           const std::vector<std::string> & neg) const;
-    std::string buildRuleJudgePrompt(const std::vector<json> & rules) const;
-    std::vector<json> parseMatchedRuleNames(const std::string & output,
-                                            const std::vector<json> & candidates) const;
-    json matchRuleDirect(const ImageRGB & img, double now);
+    struct DescResult {                  // 一次描述生成的输出；不再走 last_* 成员，
+        std::string text;                // 使描述阶段可以完全脱离 mu_ 跑
+        std::string zh;
+        std::vector<std::string> attrs;
+    };
+    DescResult describeImage(const ImageRGB & img, const std::string & prompt);
     json buildDebugSnapshot(const ImageRGB & img);   // 生成描述并返回快照；调用方持有 mu_
 
     VlmDescriber * vlm_;
@@ -69,20 +63,20 @@ private:
     Config cfg_;
 
     std::string mode_;
-    std::string base_prompt_, structured_prompt_, judge_prompt_, description_prompt_;
-    int structured_max_, vlm_max_, judge_max_, rule_desc_max_, rule_prompt_max_texts_;
+    std::string base_prompt_, description_prompt_;
+    int vlm_max_;
     double temp_, rep_;
-    bool rule_desc_enabled_, rule_desc_verify_;
 
     std::vector<json> rules_;
-    std::map<std::string, EmbMat> rule_emb_, neg_emb_;
-    std::map<std::string, std::vector<std::string>> pos_texts_, neg_texts_;
+    std::map<std::string, EmbMat> rule_emb_;
+    std::map<std::string, EmbMat> neg_emb_;          // 负样本文本向量：pos 须超过 max(neg)+score_diff 才告警
+    std::map<std::string, std::vector<std::string>> pos_texts_;
+    std::map<std::string, std::vector<std::string>> neg_texts_;
     std::map<std::string, std::optional<std::set<std::string>>> attr_pos_;  // nullopt=需语义匹配
-    std::map<std::string, std::set<std::string>> attr_neg_;
+    std::map<std::string, std::set<std::string>> attr_neg_;   // 符号规则：负样本属性（检出任一 → neg=1.0）
     std::map<std::string, double> last_trigger_;
+    std::map<std::string, std::vector<float>> vec_cache_;     // 规则文本→向量缓存：updateRules 只编码新文本
 
-    std::string last_desc_zh_;                 // last_description_zh
-    std::vector<std::string> last_attrs_;      // last_attributes
     json dbg_snapshot_ = json::object();       // 调试捕获快照（match 每次调用先清空）
     bool head_on_ = false;                     // 属性线性头可用：combined 不再走 VLM 结构化生成
 

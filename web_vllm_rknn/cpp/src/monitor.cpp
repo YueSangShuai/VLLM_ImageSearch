@@ -13,16 +13,8 @@ Monitor::Monitor(const Config & cfg) : cfg_(cfg) {
     printf("加载YOLO模型: %s\n", cfg.yolo_onnx_path.c_str());
     detector_.reset(new Detector(cfg.yolo_onnx_path, cfg.det_conf, cfg.det_iou));
 
-    std::string device = cfg.device;
-    if (device.rfind("cuda", 0) == 0) {
-        // 无 GPU 环境自动降级为 CPU（python 按 torch.cuda.is_available 判断）
-        // C++ 侧：llama 后端枚举里找不到 CUDA 设备时，common_init_from_params 会自然回退，
-        // 这里只需保证 n_gpu_layers 语义在 VlmDescriber 内部一致。
-    }
-
     printf("加载Qwen-VL描述模型: %s (模式: %s)\n", cfg.vlm_model_path.c_str(), cfg.match_mode.c_str());
-    describer_.reset(new VlmDescriber(cfg.vlm_model_path, cfg.mmproj_path, device,
-                                      cfg.n_gpu_layers, cfg.n_ctx,
+    describer_.reset(new VlmDescriber(cfg.vlm_model_path, cfg.mmproj_path, cfg.n_ctx,
                                       cfg.vlm_temperature, cfg.vlm_repetition_penalty));
     describer_->setAttrHead(cfg.attr_head_path);   // 可选件：加载失败自动走旧路径
 
@@ -154,6 +146,28 @@ json Monitor::refreshRules() {
     res["success"] = true;
     res["message"] = "已刷新 " + std::to_string(total) + " 条规则";
     return res;
+}
+
+void Monitor::refreshRulesAsync() {
+    // HTTP 线程零等待：后台线程执行 refreshRules（其中 matcher 重编码可能要几秒）。
+    // 已有刷新在跑时只置重刷标记——refreshRules 每次都重读最新 tasks.json，
+    // 补一轮即可覆盖期间的新保存，不会丢更新也不会并发重入。
+    bool expect = false;
+    if (!refreshing_.compare_exchange_strong(expect, true)) {
+        refresh_again_ = true;
+        return;
+    }
+    std::thread([this] {
+        do {
+            refresh_again_ = false;
+            try {
+                refreshRules();
+            } catch (const std::exception & e) {
+                printf("规则刷新失败: %s\n", e.what());
+            }
+        } while (refresh_again_);
+        refreshing_ = false;
+    }).detach();
 }
 
 json Monitor::stop() {

@@ -12,10 +12,9 @@ public:
 
     // embed：run_imgenc 交错布局（token i 段 j 在 (i*n_output + j)*embed_size，段 0 = main）。
     // mean-pool 段 0 -> W·x+b -> sigmoid -> 逐属性阈值；attrs_out 填属性名（含 Female，
-    // Male 派生由调用方负责，与 extractStructuredAttributes 语义对齐）。
+    // Male 派生由调用方负责）。
     void run(const float * embed, int n_tokens, int n_output, int embed_size,
-             std::vector<std::string> * attrs_out,
-             std::vector<float> * probs_out = nullptr) const;
+             std::vector<std::string> * attrs_out) const;
 
 private:
     bool ready_ = false;

@@ -7,6 +7,7 @@
 #include "text_embedder.h"
 #include "vlm_describer.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,7 +21,8 @@ public:
     ~Monitor();
 
     json start();            // {"success":true,"message":"已启动 N 个设备监控"}
-    json refreshRules();     // 重新读 tasks.json 并刷新各设备规则
+    json refreshRules();     // 重新读 tasks.json 并刷新各设备规则（同步，会等 match 放锁）
+    void refreshRulesAsync();// 后台线程刷新；已有刷新在跑时合并请求（HTTP 线程零等待）
     json stop();
 
     bool isRunning() const;
@@ -48,4 +50,6 @@ private:
     std::map<std::string, std::unique_ptr<Runner>> processors_;  // 保持设备顺序（map 按 id 排序，与 python dict 顺序可能不同，仅影响 message 无关字段）
 
     mutable std::mutex mu_;
+    std::atomic<bool> refreshing_{false};
+    std::atomic<bool> refresh_again_{false};   // 刷新期间又有请求 → 跑完当前这轮再刷一轮
 };

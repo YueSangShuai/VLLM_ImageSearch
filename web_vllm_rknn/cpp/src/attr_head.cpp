@@ -84,8 +84,7 @@ bool AttrHead::load(const std::string & path, int expect_in_dim) {
 }
 
 void AttrHead::run(const float * embed, int n_tokens, int n_output, int embed_size,
-                   std::vector<std::string> * attrs_out,
-                   std::vector<float> * probs_out) const {
+                   std::vector<std::string> * attrs_out) const {
     if (attrs_out) attrs_out->clear();
     if (!ready_ || n_tokens <= 0 || n_output <= 0 || embed_size != in_dim_) return;
 
@@ -99,14 +98,13 @@ void AttrHead::run(const float * embed, int n_tokens, int n_output, int embed_si
     const float inv = 1.0f / (float)n_tokens;
     for (auto & v : pooled) v *= inv;
 
-    if (attrs_out || probs_out) {
+    if (attrs_out) {
         for (int j = 0; j < n_attrs_; j++) {
             const float * w = w_.data() + (size_t)j * in_dim_;
             float acc = b_[j];
             for (int d = 0; d < in_dim_; d++) acc += w[d] * pooled[d];
             float prob = 1.0f / (1.0f + std::exp(-acc));
-            if (probs_out) probs_out->push_back(prob);
-            if (attrs_out && prob >= thr_[j] && j < (int)table.size())
+            if (prob >= thr_[j] && j < (int)table.size())
                 attrs_out->push_back(table[j]);
         }
     }

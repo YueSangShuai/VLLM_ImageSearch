@@ -78,49 +78,26 @@ Config Config::load() {
         "/home/pi/output_rk3588/models/qwen3-vl_vision_rk3588.rknn");
     c.mmproj_path = getenv_str("VLM_MMPROJ_PATH",
         "/home/pi/output_rk3588/models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm");
-    c.device = getenv_str("VLM_DEVICE", "cuda:0");
-    int ngl = (int)getenv_int("VLM_GGUF_N_GPU_LAYERS", -1);
-    if (c.device.rfind("cpu", 0) == 0) ngl = 0;
-    c.n_gpu_layers = ngl;
     c.n_ctx = (int)getenv_int("VLM_GGUF_N_CTX", 4096);
 
     std::string mode = getenv_str("VLM_MATCH_MODE", "combined");
     for (auto &ch : mode) ch = (char)tolower(ch);
-    if (mode != "structured" && mode != "description" && mode != "combined" && mode != "rule_direct") {
-        printf("未知的VLM_MATCH_MODE: %s，回退到 structured\n", mode.c_str());
-        mode = "structured";
+    if (mode != "description" && mode != "combined") {
+        printf("未知的VLM_MATCH_MODE: %s，回退到 combined\n", mode.c_str());
+        mode = "combined";
     }
     c.match_mode = mode;
 
     // 代码级默认与 processor.py DEFAULT_DESCRIPTION_PROMPT 一致（英文）；
-    // 实际部署由 use_vllm_web.sh / run_web.sh 注入中文提示词
+    // 实际部署由 run_web_rk.sh 注入中文提示词
     std::string desc_prompt = getenv_str("VLM_DESCRIPTION_PROMPT",
         "Describe the pedestrian in the image in detail, including gender, age range, "
         "view direction, clothing, colors, carried objects, and other visible attributes.");
-    std::string judge_prompt = getenv_str("VLM_RULE_JUDGE_PROMPT", "");  // 空 = matcher 用 DEFAULT_RULE_JUDGE_PROMPT
-    c.rule_judge_max_new_tokens = (int)getenv_int("VLM_RULE_JUDGE_MAX_NEW_TOKENS", 128);
-    std::string struct_prompt = getenv_str("VLM_STRUCTURED_PROMPT", "");
-    if (struct_prompt.empty()) {
-        // 与 processor.py DEFAULT_STRUCTURED_PROMPT 一致（PEDESTRIAN_ATTRIBUTES 见 matcher.cpp）
-        struct_prompt = ""; // 由 matcher 用内置列表构造
-    }
     c.description_prompt = strip_image_placeholder(desc_prompt);
-    c.structured_prompt = struct_prompt.empty() ? "" : strip_image_placeholder(struct_prompt);
-    // {rules} 占位符缺失时回退默认（与 processor.py __init__ 一致）
-    c.rule_judge_prompt = judge_prompt.empty() ? "" : strip_image_placeholder(judge_prompt);
 
-    c.structured_max_new_tokens = (int)getenv_int("VLM_STRUCTURED_MAX_NEW_TOKENS", 128);
     c.vlm_max_new_tokens = (int)getenv_int("VLM_MAX_NEW_TOKENS", 120);
     c.vlm_temperature = getenv_double("VLM_GENERATION_TEMPERATURE", 0.0);
     c.vlm_repetition_penalty = getenv_double("VLM_REPETITION_PENALTY", 1.2);
-    c.structured_repetition_penalty =
-        getenv_double("VLM_STRUCTURED_REPETITION_PENALTY", c.vlm_repetition_penalty > 1.2
-                        ? c.vlm_repetition_penalty : 1.4);
-
-    c.rule_description_enabled = getenv_bool("VLM_RULE_DESCRIPTION_ENABLED", true);
-    c.rule_description_verify = getenv_bool("VLM_RULE_DESCRIPTION_VERIFY", true);
-    c.rule_description_max_new_tokens = (int)getenv_int("VLM_RULE_DESCRIPTION_MAX_NEW_TOKENS", 60);
-    c.rule_prompt_max_texts = (int)getenv_int("VLM_RULE_PROMPT_MAX_TEXTS", 3);
 
     // 属性线性头（qwen_classifer/export_head.py 导出）；VLM_ATTR_HEAD_PATH=off 显式禁用
     // （getenv_str 把空串当未设置，禁用哨兵值用 "off"）

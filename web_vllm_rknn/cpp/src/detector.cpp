@@ -8,9 +8,6 @@
 #include <stdexcept>
 
 namespace {
-#ifndef WEBVLLM_RKNN
-const Ort::MemoryInfo g_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-#endif
 constexpr int kPersonClass = 0;
 
 float iou(const float *a, const float *b) {
@@ -23,36 +20,10 @@ float iou(const float *a, const float *b) {
 }
 
 int round_half_up(double v) { return (int)std::lround(v); }  // 近 round()
-
-#ifdef WEBVLLM_RKNN
-// IEEE-754 binary16 -> float32
-float fp16_to_f32(uint16_t h) {
-    uint32_t sign = (uint32_t)(h & 0x8000) << 16;
-    uint32_t exp = (h >> 10) & 0x1f, mant = h & 0x3ff;
-    uint32_t out;
-    if (exp == 0) {
-        if (mant == 0) out = sign;
-        else {  // subnormal
-            int e = -1;
-            do { mant <<= 1; e++; } while (!(mant & 0x400));
-            mant &= 0x3ff;
-            out = sign | ((uint32_t)(127 - 15 - e + 1) << 23) | (mant << 13);
-        }
-    } else if (exp == 31) {
-        out = sign | 0x7f800000 | (mant << 13);
-    } else {
-        out = sign | ((exp + 127 - 15) << 23) | (mant << 13);
-    }
-    float f;
-    memcpy(&f, &out, 4);
-    return f;
-}
-#endif
 }  // namespace
 
 Detector::Detector(const std::string &onnx_path, float conf_th, float iou_th)
     : conf_th_(conf_th), iou_th_(iou_th) {
-#ifdef WEBVLLM_RKNN
     int ret = rknn_init(&rknn_ctx_, (void *)onnx_path.c_str(), 0, 0, NULL);
     if (ret < 0) throw std::runtime_error("rknn_init YOLO 失败 ret=" + std::to_string(ret));
     const char *cores = getenv("RKNN_YOLO_CORE_NUM");
@@ -72,17 +43,10 @@ Detector::Detector(const std::string &onnx_path, float conf_th, float iou_th)
     fprintf(stderr, "YOLO rknn out: dims=[%d,%d,%d,%d] type=%d size=%d n_elems=%d\n",
             out_attr_.dims[0], out_attr_.dims[1], out_attr_.dims[2], out_attr_.dims[3],
             (int)out_attr_.type, out_attr_.size, out_attr_.n_elems);
-#else
-    opts_.SetIntraOpNumThreads(2);
-    opts_.SetInterOpNumThreads(1);
-    session_ = std::make_unique<Ort::Session>(env_, onnx_path.c_str(), opts_);
-#endif
 }
 
 Detector::~Detector() {
-#ifdef WEBVLLM_RKNN
     if (rknn_ctx_) rknn_destroy(rknn_ctx_);
-#endif
 }
 
 Detector::Letterboxed Detector::letterbox(const ImageRGB &frame) const {
@@ -96,22 +60,12 @@ Detector::Letterboxed Detector::letterbox(const ImageRGB &frame) const {
         f1 = resize_bilinear(frame, (int)(w * scale1), (int)(h * scale1));
     }
 
-#ifdef WEBVLLM_RKNN
     int new_w = max_side_, new_h = max_side_;
     double r = std::min((double)max_side_ / f1.w, (double)max_side_ / f1.h);
     int new_w_un = (int)std::lround(f1.w * r);
     int new_h_un = (int)std::lround(f1.h * r);
     double dw = (new_w - new_w_un) / 2.0, db = (new_h - new_h_un) / 2.0;
     int left = round_half_up(dw), top = round_half_up(db);
-#else
-    double r = std::min((double)max_side_ / f1.w, (double)max_side_ / f1.h);
-    int new_w_un = (int)std::lround(f1.w * r);
-    int new_h_un = (int)std::lround(f1.h * r);
-    int new_w = ((new_w_un + stride_ - 1) / stride_) * stride_;
-    int new_h = ((new_h_un + stride_ - 1) / stride_) * stride_;
-    double dw = (new_w - new_w_un) / 2.0, db = (new_h - new_h_un) / 2.0;
-    int left = round_half_up(dw - 0.1), top = round_half_up(db - 0.1);
-#endif
 
     ImageRGB resized = resize_bilinear(f1, new_w_un, new_h_un);
     out.img.w = new_w; out.img.h = new_h;
@@ -130,9 +84,7 @@ std::vector<Detection> Detector::detect(const ImageRGB &frame) {
     auto lb = letterbox(frame);
     int H = lb.img.h, W = lb.img.w;
 
-    std::vector<float> input;   // ORT 路径：float NCHW /255
     std::vector<float> outbuf;  // 展平后的 [C*N] 输出
-#ifdef WEBVLLM_RKNN
     // uint8 NHWC 原图直喂：/255 已折进模型归一化（convert_yolo_rknn.py mean/std）
     // float NCHW 在 NHWC 模型上触发 "unsupported src layout for normalize"
     {
@@ -172,27 +124,6 @@ std::vector<Detection> Detector::detect(const ImageRGB &frame) {
     int N = out_attr_.dims[2];
     if (outbuf.size() != (size_t)C * N)
         throw std::runtime_error("YOLO RKNN 输出大小异常");
-#else
-    // uint8 RGB -> float32 NCHW /255
-    input.resize((size_t)3 * H * W);
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
-            const uint8_t *p = &lb.img.rgb[((size_t)y * W + x) * 3];
-            input[((size_t)0 * H + y) * W + x] = p[0] / 255.0f;
-            input[((size_t)1 * H + y) * W + x] = p[1] / 255.0f;
-            input[((size_t)2 * H + y) * W + x] = p[2] / 255.0f;
-        }
-    std::array<int64_t, 4> shape{1, 3, H, W};
-    auto tensor = Ort::Value::CreateTensor<float>(g_mem, input.data(), input.size(),
-                                                  shape.data(), 4);
-    const char *in_names[] = {"images"};
-    const char *out_names[] = {"output0"};
-    auto outputs = session_->Run(Ort::RunOptions{nullptr}, in_names, &tensor, 1, out_names, 1);
-    auto oshape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-    if (oshape.size() != 3) throw std::runtime_error("YOLO 输出形状异常");
-    int N = (int)oshape[2];
-    const float *o = outputs[0].GetTensorData<float>();
-#endif
 
     // 预缩放比例（PersonDetector 的第一次 resize）
     double scale1 = std::min((double)max_side_ / std::max(frame.w, frame.h), 1.0);

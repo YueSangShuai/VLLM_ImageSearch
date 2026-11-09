@@ -7,8 +7,15 @@
 /onnx_exports/
 /web_vllm_rknn/models/
 /web_vllm_cpp/models/
+/web_siglip_reid_rknn/models/
+/web_siglip_reid_rknn/onnx/
+/web_siglip_reid_rknn/rknn/
+/web_siglip_reid_rknn/export/
 .hf_cache/
 *.onnx
+*.npy
+*.raw
+tokenizer.model
 *.safetensors
 *.pt
 *.pth
@@ -75,6 +82,7 @@ detection_log.json
 # 本地文件，不入库
 # ============================================================
 /script.py
+/web_config/
 
 # ============================================================
 # Python / 系统缓存

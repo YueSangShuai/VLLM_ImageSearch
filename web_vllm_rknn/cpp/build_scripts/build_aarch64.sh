@@ -41,7 +41,6 @@ echo "==> 2/2 组装 output_cpp/"
 mkdir -p "$DEPLOY/lib" "$DEPLOY/static/static" "$DEPLOY/models/onnx"
 cp -f "$BUILD/web_vllm_rknn" "$DEPLOY/web_vllm_rknn"
 cp -f "$BUILD/bench_models" "$DEPLOY/bench_models"
-cp -f "$BUILD/yolo_probe" "$DEPLOY/yolo_probe"
 [ -e "$HERE/../output_cpp/run_bench_rk.sh" ] && chmod +x "$HERE/../output_cpp/run_bench_rk.sh" || true
 cp -a -f "$RKNN_LIB/librknnrt.so"* "$DEPLOY/lib/"
 cp -a -f "$RKLLM_LIB/librkllmrt.so"* "$DEPLOY/lib/"
@@ -50,8 +49,10 @@ cp -a "$VLLM/static/." "$DEPLOY/static/static/"
 cp -a "$VLLM/templates/"*.html "$DEPLOY/static/"
 # rknn 特有页面（如 debug.html 调试捕获页，依赖本项目的 /api/debug 接口，不进共享模板）
 cp -a "$HERE"/static/*.html "$DEPLOY/static/"
-# 业务数据：设备上板后用板卡自己的 rules/devices 配置，这里带上作种子
-cp -a "$VLLM/data/." "$DEPLOY/data/"
+# 业务数据：设备上板后用板卡自己的 rules/devices 配置，这里带上作种子。
+# -n（no-clobber）：只补不覆盖——曾因无 -n 把刚从板子拉回的线上 tasks/devices.json
+# 冲成 x86 种子（2026-11 两次踩坑），种子语义必须 = 缺了才补。
+cp -a -n "$VLLM/data/." "$DEPLOY/data/"
 # YOLO / BGE：上板先用 ORT-CPU 跑（Phase 1 再转 RKNN）
 [ -e "$VLLM/models/onnx/yolov8n-dyn.onnx" ] && cp -a "$VLLM/models/onnx/yolov8n-dyn.onnx" "$DEPLOY/models/onnx/" || true
 [ -e "$VLLM/models/onnx/bge-small-zh.onnx" ] && cp -a "$VLLM/models/onnx/bge-small-zh.onnx" "$DEPLOY/models/onnx/" || true

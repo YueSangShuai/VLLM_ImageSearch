@@ -47,6 +47,7 @@
         }
         .hit-yes { background: #dc3545; color: white; }
         .hit-no { background: #e9ecef; color: #6c757d; }
+        .hit-cool { background: #fff3cd; color: #856404; }
         .attr-chip {
             display: inline-block;
             padding: 2px 8px;
@@ -55,6 +56,10 @@
             border-radius: 4px;
             font-size: 12px;
         }
+        .attr-chip.miss { background: #f8d7da; color: #842029; text-decoration: line-through; }
+        .rule-line { font-size: 12px; line-height: 1.7; white-space: nowrap; }
+        .rule-line .score { font-weight: 600; }
+        .rule-line .thr { color: #999; }
     </style>
 </head>
 <body>
@@ -113,7 +118,7 @@
                             <th>设备</th>
                             <th>VLM 描述</th>
                             <th>属性</th>
-                            <th>命中规则</th>
+                            <th>规则明细（分数/阈值）</th>
                             <th>时间</th>
                         </tr>
                     </thead>
@@ -192,6 +197,38 @@
             return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
+        const STATUS_LABEL = {
+            hit: '命中', below_threshold: '未达阈', below_score_diff: '低于diff',
+            cooldown: '冷却', no_embedding: '无向量',
+        };
+
+        // 逐规则得分明细：未命中规则也显示分数/阈值，符号规则附缺失属性
+        function renderRuleDetails(details, modal) {
+            if (!details || !details.length) return '';
+            return details.map(d => {
+                const cls = d.status === 'hit' ? 'hit-yes'
+                          : (d.status === 'cooldown' ? 'hit-cool' : 'hit-no');
+                const score = (d.score == null) ? '—' : (d.score * 100).toFixed(1) + '%';
+                const thr = (d.threshold == null) ? '' :
+                    `<span class="thr">/${(d.threshold * 100).toFixed(1)}%</span>`;
+                const cool = (d.status === 'cooldown' && d.would_hit) ? '<span class="thr">(本可命中)</span>' : '';
+                let extra = '';
+                if (d.type === 'symbolic') {
+                    const miss = d.missing_attrs || [];
+                    if (miss.length) extra = ` <span style="color:#842029;">缺:${miss.map(esc).join(',')}</span>`;
+                } else if (modal && d.positive_list && d.positive_list.length) {
+                    const rows = d.positive_list.map((t, i) => {
+                        const s = (d.positive_scores && d.positive_scores[i] != null)
+                            ? (d.positive_scores[i] * 100).toFixed(1) + '%' : '—';
+                        return `<div style="color:#666;">· ${esc(t)} → <span class="score">${s}</span></div>`;
+                    }).join('');
+                    extra = `<div style="margin-left:1rem;">${rows}</div>`;
+                }
+                return `<div class="rule-line"><span class="hit-badge ${cls}">${STATUS_LABEL[d.status] || esc(d.status)}</span> ` +
+                       `${esc(d.rule_name)} <span class="score">${score}</span>${thr}${cool}${extra}</div>`;
+            }).join('');
+        }
+
         function renderEntries() {
             const tbody = document.getElementById('debugTableBody');
             const pagination = document.getElementById('pagination');
@@ -212,6 +249,7 @@
                 const zh = e.description_zh || '';
                 const preview = (zh || descFull).slice(0, 50);
                 const rules = (e.matched_rules || []).map(r => `${esc(r.rule_name)} ${(r.score * 100).toFixed(1)}%`).join('<br>');
+                const details = renderRuleDetails(e.rule_details, false);
                 return `
                 <tr ${e.matched ? 'style="background:#fff5f5;"' : ''}>
                     <td><img src="/data/debug_images/${e.image}" class="debug-image-thumb" loading="lazy"
@@ -227,8 +265,9 @@
                     </td>
                     <td style="max-width:220px;">${attrs || '<span style="color:#bbb;">—</span>'}</td>
                     <td>
-                        ${e.matched ? `<span class="hit-badge hit-yes">命中</span><div style="margin-top:4px;font-size:12px;">${rules}</div>`
-                                    : '<span class="hit-badge hit-no">未命中</span>'}
+                        ${details ? `<div style="margin-bottom:2px;">${e.matched ? '<span class="hit-badge hit-yes">命中</span>' : '<span class="hit-badge hit-no">未命中</span>'}</div>${details}`
+                                  : (e.matched ? `<span class="hit-badge hit-yes">命中</span><div style="margin-top:4px;font-size:12px;">${rules}</div>`
+                                               : '<span class="hit-badge hit-no">未命中</span>')}
                     </td>
                     <td style="white-space:nowrap;font-size:13px;">${formatTime(e.timestamp)}</td>
                 </tr>`;
@@ -253,6 +292,16 @@
             const rules = (e.matched_rules || []).map(r =>
                 `<div style="margin:0.2rem 0;">${esc(r.rule_name)}
                  <span class="hit-badge hit-yes" style="margin-left:0.4rem;">${(r.score * 100).toFixed(1)}%</span></div>`).join('');
+            // 规则明细：符号规则展开 期望属性(命中/缺失) + 覆盖率，语义规则逐正样本分数
+            const detailsFull = (e.rule_details || []).length ? (e.rule_details).map(d => {
+                let attrChips = '';
+                if (d.type === 'symbolic' && d.expected && d.expected.length) {
+                    const miss = new Set(d.missing_attrs || []);
+                    attrChips = `<div style="margin-left:1rem;">` + d.expected.map(a =>
+                        `<span class="attr-chip${miss.has(a) ? ' miss' : ''}">${esc(a)}</span>`).join('') + `</div>`;
+                }
+                return renderRuleDetails([d], true) + attrChips;
+            }).join('') : '';
             document.getElementById('modalInfo').innerHTML = `
                 <p><strong>设备名称:</strong> ${esc(e.device_name)}　<strong>时间:</strong> ${formatTime(e.timestamp)}</p>
                 <p><strong>BBox:</strong> [${(e.bbox || []).join(', ')}]${e.low_quality ? '　<span style="color:#999;">低质量</span>' : ''}</p>
@@ -262,7 +311,8 @@
                     ${e.description_zh ? `<p style="margin:0.3rem 0 0 0;color:#666;line-height:1.5;">${esc(e.description_zh)}</p>` : ''}
                 </div>
                 <div style="margin:0.5rem 0;"><strong>属性:</strong><br>${attrs || '—'}</div>
-                <div style="margin:0.5rem 0;"><strong>命中规则:</strong><br>${rules || '未命中'}</div>
+                <div style="margin:0.5rem 0;"><strong>规则明细（分数/阈值，含未命中）:</strong><br>
+                    ${detailsFull || (rules ? `<div style="margin:0.2rem 0;">命中规则:<br>${rules}</div>` : '未命中（无逐规则明细，可能为旧记录）')}</div>
             `;
             document.getElementById('imageModal').style.display = 'flex';
         }

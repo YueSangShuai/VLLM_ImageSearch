@@ -1,14 +1,10 @@
 #pragma once
 // YOLOv8n 行人检测：复刻 ultralytics 的 letterbox(auto) + 解码 + NMS。
 // 接口对齐 Python PersonDetector.detect：输入帧（RGB），输出原帧坐标 bbox + conf。
-// 后端编译期二选一：默认 ONNX Runtime（动态 letterbox 尺寸）；
-// 定义 WEBVLLM_RKNN -> RKNN C API（固定 640x640 方形 letterbox，后处理几何不变）。
+// 后端固定 RKNN C API（固定 640x640 方形 letterbox，后处理几何不变；
+// ORT-CPU 后端见 web_vllm_cpp 仓库）。
 #include "frame.h"
-#ifdef WEBVLLM_RKNN
 #include "rknn_api.h"
-#else
-#include <onnxruntime_cxx_api.h>
-#endif
 #include <string>
 #include <vector>
 #include <memory>
@@ -34,16 +30,10 @@ private:
     };
     Letterboxed letterbox(const ImageRGB &frame) const;
 
-#ifdef WEBVLLM_RKNN
     rknn_context rknn_ctx_ = 0;
     rknn_input_output_num io_num_{};
     rknn_tensor_attr in_attr_{};
     rknn_tensor_attr out_attr_{};
-#else
-    Ort::Env env_;
-    Ort::SessionOptions opts_;
-    std::unique_ptr<Ort::Session> session_;
-#endif
     float conf_th_, iou_th_;
     int max_side_ = 640, stride_ = 32;
     std::mutex mu_;

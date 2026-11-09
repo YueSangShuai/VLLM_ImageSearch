@@ -1,0 +1,26 @@
+#!/bin/bash
+# web_siglip_reid（RK3588）：SigLIP2-reid 图文直接匹配，替代 Qwen3-VL+BGE 两级结构。
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+export LD_LIBRARY_PATH="$HERE/lib:${LD_LIBRARY_PATH:-}"
+
+export WEB_VLLM_ROOT="${WEB_VLLM_ROOT:-$HERE}"
+export WEB_VLLM_PORT="${WEB_VLLM_PORT:-5004}"
+
+# SigLIP2-reid 双塔：视觉塔 NPU / 文本塔+Gemma sp 板端 CPU（仅规则变更时算文本）
+export SIGLIP_VISION_RKNN="${SIGLIP_VISION_RKNN:-$HERE/models/siglip_vision_fp16.rknn}"
+export SIGLIP_TEXT_ONNX="${SIGLIP_TEXT_ONNX:-$HERE/models/onnx/siglip_text_int8.onnx}"
+export SIGLIP_SP_MODEL="${SIGLIP_SP_MODEL:-$HERE/models/tokenizer.model}"
+export RKNN_SIGLIP_CORE_NUM="${RKNN_SIGLIP_CORE_NUM:-1}"
+
+# 分值尺度：SigLIP 正确属性 ~0.15-0.22、无关 ~0（PETA 实测）。规则可逐条覆盖 threshold。
+export SIGLIP_DEFAULT_THRESHOLD="${SIGLIP_DEFAULT_THRESHOLD:-0.15}"
+
+# YOLOv8n 检测（沿用 web_vllm_rknn 的 NPU 产物）
+export DETECTOR_ONNX_PATH="${DETECTOR_ONNX_PATH:-$HERE/models/yolov8n_640_rk3588.rknn}"
+export RKNN_YOLO_CORE_NUM="${RKNN_YOLO_CORE_NUM:-1}"
+
+# 调试捕获：=1 时所有行人存图+逐规则打分到 data/debug_log.json，/debug 页查看
+export DEBUG_CAPTURE="${DEBUG_CAPTURE:-0}"
+
+exec ./web_siglip_reid
