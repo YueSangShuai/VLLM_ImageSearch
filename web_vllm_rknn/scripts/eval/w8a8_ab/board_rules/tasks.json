@@ -1,0 +1,377 @@
+[
+  {
+    "created_at": "2026-05-14T03:47:25.650732",
+    "device": {
+      "created_at": "2026-05-14T01:59:56.559187",
+      "id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+      "ip": "10.8.66.11",
+      "main_stream_path": "/ch01",
+      "name": "一楼电梯厅",
+      "password": "zkteco1234",
+      "port": "554",
+      "status": "online",
+      "stream_type": "sub",
+      "sub_stream_path": "/ch01_sub",
+      "username": "admin"
+    },
+    "device_id": "a4cfe0d3-ac5f-4699-bf8e-c87d7bafbb76",
+    "device_name": "一楼电梯厅",
+    "id": "task_1778730431925",
+    "name": "测试",
+    "rules": [
+      {
+        "enabled": true,
+        "id": "rule_1778744371393",
+        "interval": 2,
+        "name": "黑衣服男生",
+        "negative": [
+          "穿黑色上衣的女孩",
+          "穿黑色上衣的女人",
+          "穿白色上衣的男孩",
+          "穿白色上衣的男人",
+          "穿红色上衣的男孩",
+          "穿红色上衣的男人",
+          "穿灰色上衣的男人",
+          "穿黑色上衣的长发女生"
+        ],
+        "positive": [
+          "一名穿黑色上衣的男生",
+          "一名穿黑色上衣的男人"
+        ],
+        "score_diff": 0.02,
+        "text": "",
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1778814284292",
+        "interval": 2,
+        "name": "长头发的女生",
+        "negative": [
+          "长头发的男孩",
+          "长头发的男人"
+        ],
+        "positive": [
+          "长头发的女孩",
+          "长头发的女人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1778840830955",
+        "interval": 2,
+        "name": "穿裙子的女生",
+        "negative": [
+          "穿裙子的男孩",
+          "穿裙子的男人",
+          "穿裤子的女孩",
+          "穿裤子的女人",
+          "穿长裤的男孩",
+          "穿长裤的男人"
+        ],
+        "positive": [
+          "穿裙子的女孩",
+          "穿裙子的女人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779185585668",
+        "interval": 2,
+        "name": "戴眼镜的男生",
+        "negative": [
+          "戴眼镜的女孩",
+          "戴眼镜的女人",
+          "不戴眼镜的男孩",
+          "不戴眼镜的男人"
+        ],
+        "positive": [
+          "戴眼镜的男孩",
+          "戴眼镜的男人"
+        ],
+        "score_diff": 0,
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779185611676",
+        "interval": 2,
+        "name": "戴眼镜的女生",
+        "negative": [
+          "戴眼镜的男孩",
+          "戴眼镜的男人",
+          "不戴眼镜的女孩",
+          "不戴眼镜的女人"
+        ],
+        "positive": [
+          "戴眼镜的女孩",
+          "戴眼镜的女人"
+        ],
+        "score_diff": 0,
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779185695836",
+        "interval": 2,
+        "name": "带帽子的人",
+        "negative": [
+          "黑头发的人"
+        ],
+        "positive": [
+          "戴帽子的人"
+        ],
+        "threshold": 0.55
+      }
+    ]
+  },
+  {
+    "created_at": "2026-05-19T08:36:29.509183",
+    "device": {
+      "created_at": "2026-05-19T08:32:17.274890",
+      "id": "d2d3f1f3-f2fc-4a65-9965-9c8b9b07fd78",
+      "ip": "10.8.67.92",
+      "main_stream_path": "/ch01.264",
+      "name": "一楼外面固定",
+      "password": "123456",
+      "port": "554",
+      "status": "offline",
+      "stream_type": "sub",
+      "sub_stream_path": "/ch01_sub.264",
+      "username": "admin"
+    },
+    "device_id": "d2d3f1f3-f2fc-4a65-9965-9c8b9b07fd78",
+    "device_name": "一楼外面固定",
+    "id": "task_1779179775053",
+    "name": "一楼外面固定",
+    "rules": [
+      {
+        "enabled": false,
+        "id": "rule_1779179788844",
+        "interval": 2,
+        "name": "黑衣服男生",
+        "negative": [
+          "穿黑色上衣的女孩",
+          "穿黑色上衣的女人",
+          "穿白色上衣的男孩",
+          "穿白色上衣的男人",
+          "穿红色上衣的男孩",
+          "穿红色上衣的男人"
+        ],
+        "positive": [
+          "穿黑色上衣的男孩",
+          "穿黑色上衣的男人"
+        ],
+        "score_diff": 0.02,
+        "threshold": 0.55
+      },
+      {
+        "enabled": false,
+        "id": "rule_1779179903796",
+        "interval": 2,
+        "name": "长头发的女生",
+        "negative": [
+          "长头发的男孩",
+          "长头发的男人"
+        ],
+        "positive": [
+          "长头发的女孩",
+          "长头发的女人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779179949820",
+        "interval": 2,
+        "name": "穿裙子的女生",
+        "negative": [
+          "穿裙子的男孩",
+          "穿裙子的男人",
+          "穿裤子的女孩",
+          "穿裤子的女人",
+          "穿长裤的男孩",
+          "穿长裤的男人"
+        ],
+        "positive": [
+          "穿裙子的女孩",
+          "穿裙子的女人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1779179965428",
+        "interval": 2,
+        "name": "带黄色头盔的人",
+        "negative": [
+          "戴白色头盔的人",
+          "戴黑色头盔的人",
+          "戴蓝色头盔的人",
+          "穿红色上衣的人"
+        ],
+        "positive": [
+          "戴黄色头盔的人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1779179994444",
+        "interval": 2,
+        "name": "穿黄色上衣的人",
+        "negative": [
+          "穿蓝色上衣的人",
+          "穿黑色上衣的人",
+          "穿白色上衣的人"
+        ],
+        "positive": [
+          "穿黄色上衣的人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1779180077364",
+        "interval": 2,
+        "name": "带蓝色头盔的人",
+        "negative": [
+          "戴黄色头盔的人",
+          "戴黑色头盔的人",
+          "戴白色头盔的人",
+          "穿蓝色上衣的人",
+          "穿红色上衣的人"
+        ],
+        "positive": [
+          "戴蓝色头盔的人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779185525245",
+        "interval": 2,
+        "name": "黑衣服的女生",
+        "negative": [
+          "穿黑色上衣的男孩",
+          "穿黑色上衣的男人",
+          "穿白色上衣的女人",
+          "穿白色上衣的女孩",
+          "穿粉色上衣的女人",
+          "穿粉色上衣的女孩",
+          "穿灰色上衣的女人",
+          "穿蓝色上衣的女人"
+        ],
+        "positive": [
+          "一名穿黑色上衣的女生",
+          "穿黑色上衣搭配短裙的女人",
+          "一名穿黑色上衣的女人"
+        ],
+        "score_diff": 0.02,
+        "text": "",
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1779239902241",
+        "interval": 2,
+        "name": "骑电动车的人",
+        "negative": [
+          "正在走路的人"
+        ],
+        "positive": [
+          "骑电动车的人"
+        ],
+        "threshold": 0.55
+      }
+    ]
+  },
+  {
+    "created_at": "2026-05-20T06:46:04.809685",
+    "device": {
+      "created_at": "2026-05-20T06:44:13.956719",
+      "id": "2981b5e4-68eb-49da-b259-ab62a9a612f4",
+      "ip": "10.8.66.202",
+      "main_stream_path": "/ch01",
+      "name": "10楼食堂",
+      "password": "123456",
+      "port": "554",
+      "status": "online",
+      "stream_type": "sub",
+      "sub_stream_path": "/ch01_sub",
+      "username": "admin"
+    },
+    "device_id": "2981b5e4-68eb-49da-b259-ab62a9a612f4",
+    "device_name": "10楼食堂",
+    "id": "task_1779259501721",
+    "name": "10楼食堂",
+    "rules": [
+      {
+        "id": "rule_1779259566001",
+        "interval": 2,
+        "name": "蓝衣服男生",
+        "negative": [
+          "穿蓝色上衣的女孩",
+          "穿蓝色上衣的女人",
+          "穿白色上衣的男孩",
+          "穿白色上衣的男人",
+          "穿白色上衣的女孩",
+          "穿白色上衣的女人",
+          "穿黑色上衣的男孩",
+          "穿黑色上衣的男人",
+          "穿黑色上衣的女孩",
+          "穿黑色上衣的女人"
+        ],
+        "positive": [
+          "穿蓝色上衣的男孩",
+          "穿蓝色上衣的男人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "id": "rule_1779259596473",
+        "interval": 2,
+        "name": "长头发的女生",
+        "negative": [
+          "长头发的男孩",
+          "长头发的男人"
+        ],
+        "positive": [
+          "长头发的女孩",
+          "长头发的女人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779259647745",
+        "interval": 2,
+        "name": "戴眼镜的男生",
+        "negative": [
+          "戴眼镜的女孩",
+          "戴眼镜的女人",
+          "不戴眼镜的男孩",
+          "不戴眼镜的男人"
+        ],
+        "positive": [
+          "戴眼镜的男孩",
+          "戴眼镜的男人"
+        ],
+        "threshold": 0.55
+      },
+      {
+        "enabled": true,
+        "id": "rule_1779259669521",
+        "interval": 2,
+        "name": "戴眼镜的女生",
+        "negative": [
+          "戴眼镜的男孩",
+          "戴眼镜的男人",
+          "不戴眼镜的女孩",
+          "不戴眼镜的女人"
+        ],
+        "positive": [
+          "戴眼镜的女孩",
+          "戴眼镜的女人"
+        ],
+        "threshold": 0.55
+      }
+    ]
+  }
+]

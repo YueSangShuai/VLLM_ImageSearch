@@ -49,6 +49,17 @@ add_executable(web_vllm_rknn
     src/server.cpp
 )
 
+# W8A8 vs bf16 A/B 批量生成（scripts/eval/w8a8_ab/ 使用）
+add_executable(ab_dump
+    src/ab_dump.cpp
+    src/config.cpp
+    src/util.cpp
+    src/frame.cpp
+    src/rknn_image_enc.cc
+    src/vlm_describer.cpp
+    src/attr_head.cpp
+)
+
 find_package(Threads REQUIRED)
 
 function(configure_app_target tgt)
@@ -80,3 +91,4 @@ endfunction()
 
 configure_app_target(web_vllm_rknn)
 configure_app_target(bench_models)
+configure_app_target(ab_dump)

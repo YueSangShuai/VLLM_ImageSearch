@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <csignal>
+#include <cstdlib>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -151,6 +152,32 @@ void draw_rect(ImageRGB &img, int x1, int y1, int x2, int y2) {
     for (int t = 0; t < 2; t++) {
         for (int x = xa; x <= xb; x++) { put(x, ya + t); put(x, yb - t); }
         for (int y = ya; y <= yb; y++) { put(xa + t, y); put(xb - t, y); }
+    }
+}
+
+void draw_polyline(ImageRGB &img, const std::vector<std::pair<int, int>> &pts, bool close) {
+    if (pts.size() < 2) return;
+    auto put = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= img.w || y >= img.h) return;
+        uint8_t *p = &img.rgb[((size_t)y * img.w + x) * 3];
+        p[0] = 0; p[1] = 200; p[2] = 255;
+    };
+    size_t n = pts.size() + (close ? 1 : 0);
+    for (size_t i = 0; i + 1 < n; i++) {
+        auto [x0, y0] = pts[i];
+        auto [x1, y1] = pts[(i + 1) % pts.size()];
+        // Bresenham：逐像素连线，越界点由 put 自行丢弃
+        int dx = std::abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+        int dy = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+        for (;;) {
+            // 1px 细线经 JPEG q90 压缩后基本看不见（区域边界就是给人看的证据图），补到 2px
+            put(x0, y0); put(x0 + 1, y0); put(x0, y0 + 1);
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
+        }
     }
 }
 

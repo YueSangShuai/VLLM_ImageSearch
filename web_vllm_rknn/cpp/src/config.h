@@ -16,6 +16,7 @@ struct Config {
     std::string data_dir;             // 共享 JSON 数据目录（同 Python 版 data/）
     std::string static_dir;           // 前端静态目录
     int port = 5003;
+    std::string url_prefix;           // 反向代理前缀（如 /x-search）；空=根路径部署
 
     // VLM
     std::string vlm_model_path;       // RKNN 视觉塔

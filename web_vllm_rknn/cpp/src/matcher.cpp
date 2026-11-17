@@ -355,9 +355,16 @@ json Matcher::lastDebugSnapshot() {
     return dbg_snapshot_;
 }
 
-json Matcher::buildDebugSnapshot(const ImageRGB & image) {
-    // 调用方需已持有 mu_
-    DescResult dr = describeImage(image, description_prompt_);
+json Matcher::describeForDebug(const ImageRGB & image) {
+    // VLM 生成（秒级）在 mu_ 锁外：旧版持锁跑完整描述，该设备的 updateRules
+    // 要排队等 ~16s；refreshRules 又持 Monitor::mu_ 调 updateRules，会连锁拖住
+    // /api/monitoring/status、start/stop 等接口，表现为整站假死。
+    std::string prompt;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        prompt = description_prompt_;
+    }
+    DescResult dr = describeImage(image, prompt);
     json snap;
     snap["description"] = dr.text;
     snap["description_zh"] = dr.zh;
@@ -367,25 +374,27 @@ json Matcher::buildDebugSnapshot(const ImageRGB & image) {
     return snap;
 }
 
-json Matcher::describeForDebug(const ImageRGB & image) {
-    std::lock_guard<std::mutex> lk(mu_);
-    return buildDebugSnapshot(image);
-}
-
 json Matcher::match(const ImageRGB & image) {
     // match：符号匹配（属性规则）+ BGE 向量匹配（自然语言规则）
     json empty = json::array();
     std::string prompt;
+    bool rules_empty;
     {
         std::lock_guard<std::mutex> lk(mu_);
         dbg_snapshot_ = json::object();   // 调试快照按图作废，防止上一帧串图
-        if (rules_.empty()) {
-            // 调试捕获开启且无规则：仍生成一次描述供 /debug 展示（正常路径零开销不受影响）
-            if (cfg_.debug_capture) dbg_snapshot_ = buildDebugSnapshot(image);
-            return empty;
-        }
-        if (rule_emb_.empty()) return empty;
+        cooldown_backup_.clear();         // 回滚备份只对本次 match 的触发有效
+        rules_empty = rules_.empty();
+        if (!rules_empty && rule_emb_.empty()) return empty;
         prompt = description_prompt_;
+    }
+    if (rules_empty) {
+        // 调试捕获开启且无规则：仍生成一次描述供 /debug 展示（生成在 mu_ 锁外）
+        if (cfg_.debug_capture) {
+            json snap = describeForDebug(image);
+            std::lock_guard<std::mutex> lk(mu_);
+            dbg_snapshot_ = std::move(snap);
+        }
+        return empty;
     }
 
     double now = std::chrono::duration<double>(
@@ -564,6 +573,10 @@ json Matcher::match(const ImageRGB & image) {
         dbg_rules.push_back(d);
         if (!passed || in_cooldown) continue;   // 冷却中只记分不触发，与旧行为一致
 
+        // 先备份旧冷却时刻再覆盖：朝向过滤在 match 之后才丢弃命中，
+        // 被丢弃的规则靠 undoTrigger 还原到这里（丢弃的命中不该启动冷却）
+        auto prev_lt = last_trigger_.find(id);
+        cooldown_backup_[id] = prev_lt == last_trigger_.end() ? -1.0 : prev_lt->second;
         last_trigger_[id] = now;
         std::vector<std::string> pos = pos_texts_.count(id) ? pos_texts_[id] : std::vector<std::string>{};
 
@@ -591,4 +604,16 @@ json Matcher::match(const ImageRGB & image) {
     }
     dbg_snapshot_["rules"] = dbg_rules;   // 逐规则得分明细（含未命中），随快照进 /debug
     return matches;
+}
+
+void Matcher::undoTrigger(const std::vector<std::string> & rule_ids) {
+    if (rule_ids.empty()) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const auto & id : rule_ids) {
+        auto bk = cooldown_backup_.find(id);
+        if (bk == cooldown_backup_.end()) continue;   // 本次 match 未触发该规则，无可回滚
+        if (bk->second < 0) last_trigger_.erase(id);  // 触发前本无冷却 → 直接清除
+        else last_trigger_[id] = bk->second;          // 还原为触发前的旧冷却时刻
+        cooldown_backup_.erase(bk);
+    }
 }

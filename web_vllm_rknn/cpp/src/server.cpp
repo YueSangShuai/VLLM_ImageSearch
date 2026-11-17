@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <thread>
 
@@ -45,6 +46,82 @@ static json body_val(const json & d, const char * key, const json & def) {
     return def;
 }
 
+// ---- 按设备过滤配置白名单清洗（/api/devices PUT ← /filters 页保存） ----
+// roi_regions: [{x,y,w,h} 归一化 0..1]，逐夹紧、非法项丢弃
+static json sanitizeRoiRegions(const json & in) {
+    json out = json::array();
+    if (!in.is_array()) return out;
+    auto clamp01 = [](double v) { return v < 0 ? 0.0 : (v > 1.0 ? 1.0 : v); };
+    for (const auto & r : in) {
+        if (!r.is_object()) continue;
+        double x = 0, y = 0, w = 0, h = 0;
+        auto num = [&r](const char * k, double & v) {
+            if (!r.contains(k) || !r[k].is_number()) return false;
+            v = r[k].get<double>();
+            return true;
+        };
+        if (!num("x", x) || !num("y", y) || !num("w", w) || !num("h", h)) continue;
+        x = clamp01(x); y = clamp01(y); w = clamp01(w); h = clamp01(h);
+        if (w <= 0 || h <= 0) continue;
+        out.push_back({{"x", x}, {"y", y}, {"w", w}, {"h", h}});
+    }
+    return out;
+}
+
+// roi_polygons: [[{x,y},{x,y},...] 归一化 0..1]，外层层数与每块顶点数均有上限
+// （区域是每帧解析的，上限防手改 json 把设备线程拖慢）。上限与 parseRoiPolys 保持一致。
+static json sanitizeRoiPolys(const json & in) {
+    json out = json::array();
+    if (!in.is_array()) return out;
+    auto clamp01 = [](double v) { return v < 0 ? 0.0 : (v > 1.0 ? 1.0 : v); };
+    for (const auto & raw : in) {
+        if (out.size() >= 16) break;
+        if (!raw.is_array()) continue;
+        json pts = json::array();
+        for (const auto & pt : raw) {
+            if (pts.size() >= 64) break;
+            if (!pt.is_object() || !pt.contains("x") || !pt.contains("y")) continue;
+            if (!pt["x"].is_number() || !pt["y"].is_number()) continue;
+            double x = clamp01(pt["x"].get<double>());
+            double y = clamp01(pt["y"].get<double>());
+            if (!pts.empty()) {   // 相邻重复点：射线法判定会退化
+                const json & last = pts.back();
+                if (last["x"].get<double>() == x && last["y"].get<double>() == y) continue;
+            }
+            pts.push_back({{"x", x}, {"y", y}});
+        }
+        if (pts.size() > 1) {     // 首尾同点 = 显式闭合，运行侧隐式闭合已覆盖
+            const json & f = pts.front();
+            const json & b = pts.back();
+            if (f["x"].get<double>() == b["x"].get<double>() &&
+                f["y"].get<double>() == b["y"].get<double>()) pts.erase(pts.size() - 1);
+        }
+        if (pts.size() < 3) continue;
+        double area2 = 0;         // 鞋带公式：共线/面积极小的退化多边形丢弃
+        size_t n = pts.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++)
+            area2 += pts[j]["x"].get<double>() * pts[i]["y"].get<double>() -
+                     pts[i]["x"].get<double>() * pts[j]["y"].get<double>();
+        if (area2 < 0) area2 = -area2;
+        if (area2 < 1e-6) continue;
+        out.push_back(pts);
+    }
+    return out;
+}
+
+// orientation_filter: Front/Side/Back 子集，其余丢弃
+static json sanitizeOrientationFilter(const json & in) {
+    json out = json::array();
+    if (!in.is_array()) return out;
+    for (const auto & a : in) {
+        if (a.is_string()) {
+            std::string s = a.get<std::string>();
+            if (s == "Front" || s == "Side" || s == "Back") out.push_back(s);
+        }
+    }
+    return out;
+}
+
 static std::string read_file(const std::string & path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return "";
@@ -66,6 +143,16 @@ static void injectDebugNavLink(std::string & html) {
     if (a == std::string::npos) return;
     a += 4;
     html.insert(a, "\n            <a href=\"/debug\" class=\"nav-link\">调试捕获</a>");
+}
+
+// 「区域与过滤」为 rknn 特有页（框选 ROI/朝向过滤/低质量阈值），常驻注入导航
+static void injectFiltersNavLink(std::string & html) {
+    size_t nav = html.find("</nav>");
+    if (nav == std::string::npos) return;
+    size_t a = html.rfind("</a>", nav);
+    if (a == std::string::npos) return;
+    a += 4;
+    html.insert(a, "\n            <a href=\"/filters\" class=\"nav-link\">区域与过滤</a>");
 }
 
 // 与 app.py test_rtsp_connection 对齐：主码流 + URL 编码，能取到 1 帧即 online
@@ -108,30 +195,81 @@ void Server::heartbeat_loop() {
         if (!hb_running_) break;
         try {
             json devices = load_json_array(g_paths->devices_file);
-            bool updated = false;
+            // 逐台 RTSP 探测最长 5s×N 台，这期间 /filters、PUT /api/devices 都可能改文件。
+            // 曾按「读整份→改→整体写回」做，把并发写入的 roi_* 等字段整片覆盖回旧值
+            // （实测把刚存的全图矩形「复活」，区域形同失效）。故这里只暂存 status，
+            // 写前重读文件、按 id 只合并 status，别的字段一概不碰。
+            std::map<std::string, std::string> new_status;   // device id -> status
             for (auto & device : devices) {
                 if (!device.is_object()) continue;
                 std::string old_status = device.value("status", std::string("offline"));
-                std::string new_status = test_rtsp_connection(device);
-                if (old_status != new_status) {
-                    device["status"] = new_status;
-                    updated = true;
+                std::string probe = test_rtsp_connection(device);
+                if (old_status != probe) {
+                    new_status[device.value("id", "")] = probe;
                     printf("📡 设备 '%s' 状态变更: %s -> %s\n",
-                           device.value("name", "").c_str(), old_status.c_str(), new_status.c_str());
+                           device.value("name", "").c_str(), old_status.c_str(), probe.c_str());
                 }
             }
-            if (updated) save_json_atomic(g_paths->devices_file, devices);
+            if (new_status.empty()) continue;
+
+            json fresh = load_json_array(g_paths->devices_file);
+            bool updated = false;
+            for (auto & device : fresh) {
+                if (!device.is_object()) continue;
+                auto it = new_status.find(device.value("id", ""));
+                if (it == new_status.end() || device.value("status", "") == it->second)
+                    continue;                       // 设备已被删除或状态又被别处改了，不越权
+                device["status"] = it->second;
+                updated = true;
+            }
+            if (updated) save_json_atomic(g_paths->devices_file, fresh);
         } catch (const std::exception & e) {
             printf("心跳检测异常: %s\n", e.what());
         }
     }
 }
 
+// URL_PREFIX 非空时把 HTML/JS 里的绝对路径统一加上前缀。token 表来自模板/页面
+// 实际字面量清单（fetch/href/src 一律引号起头）；只替换紧跟引号符的路径，
+// 文本里的裸路径不会命中——正好不想动正文。
+void Server::applyPrefix(std::string &body) const {
+    if (cfg_.url_prefix.empty()) return;
+    static const char *roots[] = {"/api/", "/data/", "/static/", "/debug", "/filters",
+                                  "/devices", "/rules", "/alerts"};
+    auto replace_all = [](std::string &s, const std::string &from, const std::string &to) {
+        for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size())
+            s.replace(pos, from.size(), to);
+    };
+    for (char q : {'"', '\'', '`'}) {
+        for (const char *root : roots) {
+            std::string from(1, q); from += root;
+            std::string to(1, q); to += cfg_.url_prefix; to += root;
+            replace_all(body, from, to);
+        }
+    }
+    replace_all(body, "href=\"/\"", "href=\"" + cfg_.url_prefix + "/\"");
+}
+
 void Server::setup_routes() {
+    // 反向代理前缀（URL_PREFIX，如 /x-search）：在路由分发前剥掉，路由表不感知前缀。
+    // 本版 httplib 的 pre-routing 回调给的是 const Request&，但底层对象本身非 const，
+    // const_cast 改写 path 良定义。不带前缀的原路径照常兼容（代理已剥 / 本机脚本沿用）。
+    if (!cfg_.url_prefix.empty()) {
+        svr_.set_pre_routing_handler([p = cfg_.url_prefix](const httplib::Request &req,
+                                                           httplib::Response &) {
+            auto &r = const_cast<httplib::Request &>(req);
+            if (r.path == p) r.path = "/";
+            else if (r.path.size() > p.size() && r.path.compare(0, p.size(), p) == 0 &&
+                     r.path[p.size()] == '/')
+                r.path = r.path.substr(p.size());
+            return httplib::Server::HandlerResponse::Unhandled;
+        });
+    }
+
     // cpp-httplib 默认单线程串行处理：任一慢 handler（如 PUT /api/tasks 等
     // matcher 锁、读大 JSON）会冻结全部端点，前端表现为整个平台卡住。换 4 线程
     // 任务队列后慢请求只堵自己。共享状态均有各自锁（monitor/matcher/json_store）。
-    svr_.new_task_queue = [] { return new httplib::ThreadPool(4); };
+    svr_.new_task_queue = [] { return new httplib::ThreadPool(8); };
 
     // flask-cors 会自动应答 OPTIONS 预检；httplib 需显式兜底（同源前端不触发，跨源调用会）
     svr_.Options(".*", [](const httplib::Request &, httplib::Response & res) {
@@ -147,6 +285,9 @@ void Server::setup_routes() {
             if (html.empty()) { res.status = 404; res.set_content("Not Found", "text/plain"); return; }
             // 调试捕获开启时给公共导航注入 /debug 入口（模板与 web_vllm_cpp 共用，源码不动）
             if (cfg_.debug_capture && name != "debug") injectDebugNavLink(html);
+            // debug/filters 是 rknn 特有页、自带完整导航，不重复注入
+            if (name != "debug" && name != "filters") injectFiltersNavLink(html);
+            applyPrefix(html);   // 导航注入之后再重写绝对路径，注入的链接一并带上前缀
             res.set_content(html, "text/html; charset=utf-8");
         };
     };
@@ -155,6 +296,7 @@ void Server::setup_routes() {
     svr_.Get("/rules", page("rules"));
     svr_.Get("/alerts", page("alerts"));
     svr_.Get("/debug", page("debug"));
+    svr_.Get("/filters", page("filters"));
 
     // 静态资源：/static/<path> -> static_dir/static/<path>
     svr_.Get("/static/(.*)", [this](const httplib::Request & req, httplib::Response & res) {
@@ -166,6 +308,7 @@ void Server::setup_routes() {
         if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, ".css") == 0) mime = "text/css";
         else if (rel.size() > 3 && rel.compare(rel.size() - 3, 3, ".js") == 0) mime = "application/javascript";
         else if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, ".html") == 0) mime = "text/html; charset=utf-8";
+        if (mime != "application/octet-stream") applyPrefix(body);   // 文本资源同样重写；二进制跳过
         res.set_content(body, mime.c_str());
     });
 
@@ -205,7 +348,7 @@ void Server::setup_routes() {
         res_json(res, device);
     });
 
-    svr_.Put("/api/devices/([^/]+)", [](const httplib::Request & req, httplib::Response & res) {
+    svr_.Put("/api/devices/([^/]+)", [this](const httplib::Request & req, httplib::Response & res) {
         json data = parse_body(req);
         std::string id = req.matches[1];
         json devices = load_json_array(g_paths->devices_file);
@@ -219,10 +362,24 @@ void Server::setup_routes() {
                 d["main_stream_path"] = body_str(data, "main_stream_path", d.value("main_stream_path", "/ch01"));
                 d["sub_stream_path"] = body_str(data, "sub_stream_path", d.value("sub_stream_path", "/ch01_sub"));
                 d["stream_type"] = body_str(data, "stream_type", d.value("stream_type", "main"));
+                // 按设备过滤配置（/filters 页保存）：缺字段保持原值
+                if (data.contains("roi_regions"))
+                    d["roi_regions"] = sanitizeRoiRegions(data["roi_regions"]);
+                if (data.contains("roi_polygons"))
+                    d["roi_polygons"] = sanitizeRoiPolys(data["roi_polygons"]);
+                if (data.contains("orientation_filter"))
+                    d["orientation_filter"] = sanitizeOrientationFilter(data["orientation_filter"]);
+                for (const char * key : {"min_box_w", "min_box_h"}) {
+                    if (data.contains(key)) {
+                        double v = body_num(data, key, -1);
+                        if (v >= 0 && v <= 4096) d[key] = (int)v;
+                    }
+                }
                 break;
             }
         }
         save_json_atomic(g_paths->devices_file, devices);
+        monitor_->refreshRulesAsync();   // 设备配置热更新走同一条后台刷新链
         res_json(res, {{"success", true}});
     });
 
@@ -304,27 +461,57 @@ void Server::setup_routes() {
         std::string device_id = req.matches[1];
         int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch()).count();
+
+        // ① 1 秒内的缓存直接回；② 失败退避期内只回旧帧；③ 同设备已有线程在跑 ffmpeg
+        //    时不再排队拉取、直接回旧帧——慢/离线设备的 10fps 轮询不再吃光 HTTP 线程池
+        std::vector<uint8_t> stale;
+        bool do_grab = false;
         {
             std::lock_guard<std::mutex> lk(fc_mu_);
             auto it = frame_cache_.find(device_id);
-            if (it != frame_cache_.end() && now - it->second.time_ms < 1000) {
-                res.set_content((const char *)it->second.jpeg.data(), it->second.jpeg.size(), "image/jpeg");
-                return;
+            if (it != frame_cache_.end()) {
+                if (now - it->second.time_ms < 1000) {
+                    res.set_content((const char *)it->second.jpeg.data(), it->second.jpeg.size(), "image/jpeg");
+                    return;
+                }
+                stale = it->second.jpeg;
             }
+            auto bo = fc_backoff_until.find(device_id);
+            if (bo == fc_backoff_until.end() || now >= bo->second)
+                do_grab = fc_grabbing_.insert(device_id).second;
         }
+        if (!do_grab) {
+            if (stale.empty()) stale = placeholder_jpeg();
+            res.set_content((const char *)stale.data(), stale.size(), "image/jpeg");
+            return;
+        }
+
+        // 兜底：中途任何异常/提前返回都要归还在飞标记，否则该设备预览永久卡旧帧
+        struct GrabGuard {
+            Server * s; std::string id;
+            ~GrabGuard() { std::lock_guard<std::mutex> lk(s->fc_mu_); s->fc_grabbing_.erase(id); }
+        } guard{this, device_id};
+
         std::vector<uint8_t> jpeg;
         for (auto & d : load_json_array(g_paths->devices_file)) {
             if (d.is_object() && d.value("id", "") == device_id) {
-                // 预览用未编码 URL（与 app.py 一致）
-                jpeg = grab_frame_jpeg(device_rtsp_url_raw(d), 10);
+                // 预览用未编码 URL（与 app.py 一致）；预览超时收敛到 5s，
+                // 离线设备最坏只占一个线程 5s，退避期再挡住后续请求
+                jpeg = grab_frame_jpeg(device_rtsp_url_raw(d), 5);
                 break;
             }
         }
-        if (jpeg.empty()) jpeg = placeholder_jpeg();
         {
             std::lock_guard<std::mutex> lk(fc_mu_);
-            frame_cache_[device_id] = {now, jpeg};
+            if (jpeg.empty()) {
+                frame_cache_[device_id] = {now, placeholder_jpeg()};
+                fc_backoff_until[device_id] = now + 5000;   // 失败 5s 退避
+            } else {
+                frame_cache_[device_id] = {now, jpeg};
+                fc_backoff_until.erase(device_id);
+            }
         }
+        if (jpeg.empty()) jpeg = placeholder_jpeg();
         res.set_content((const char *)jpeg.data(), jpeg.size(), "image/jpeg");
     });
 

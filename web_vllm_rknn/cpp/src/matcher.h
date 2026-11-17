@@ -25,6 +25,10 @@ public:
     // 对应 match()：返回 matches json 数组（字段名与 Python 逐一对应）
     json match(const ImageRGB & image);
 
+    // 回滚最近一次 match() 中这些规则启动的冷却（朝向事后过滤丢弃的命中用）：
+    // match() 不知道过滤，触发即记 last_trigger_；调用方确认丢弃后调本方法还原旧值
+    void undoTrigger(const std::vector<std::string> & rule_ids);
+
     // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
     // match() 期间生成的描述快照：{description, description_zh, attributes,
     // rules(逐规则得分明细：name/type/score/threshold/status/hit，symbolic 附带
@@ -56,7 +60,6 @@ private:
         std::vector<std::string> attrs;
     };
     DescResult describeImage(const ImageRGB & img, const std::string & prompt);
-    json buildDebugSnapshot(const ImageRGB & img);   // 生成描述并返回快照；调用方持有 mu_
 
     VlmDescriber * vlm_;
     TextEmbedder * emb_;
@@ -75,6 +78,9 @@ private:
     std::map<std::string, std::optional<std::set<std::string>>> attr_pos_;  // nullopt=需语义匹配
     std::map<std::string, std::set<std::string>> attr_neg_;   // 符号规则：负样本属性（检出任一 → neg=1.0）
     std::map<std::string, double> last_trigger_;
+    // 本次 match() 触发前的 last_trigger_ 旧值（-1=原本无记录），供 undoTrigger 回滚；
+    // match() 开头清空。仅设备线程触碰（match/undoTrigger 同线程），锁内读写即可
+    std::map<std::string, double> cooldown_backup_;
     std::map<std::string, std::vector<float>> vec_cache_;     // 规则文本→向量缓存：updateRules 只编码新文本
 
     json dbg_snapshot_ = json::object();       // 调试捕获快照（match 每次调用先清空）

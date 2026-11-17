@@ -67,6 +67,12 @@ Config Config::load() {
     c.data_dir = getenv_str("WEB_VLLM_DATA_DIR", root + "/data");
     c.static_dir = getenv_str("WEB_VLLM_STATIC_DIR", c.exe_dir + "/static");
     c.port = (int)getenv_int("WEB_VLLM_PORT", 5003);
+    // URL_PREFIX：反向代理前缀（如 /x-search）。非空时后端接受带/不带前缀两种路径
+    // （pre-routing 剥前缀），页面里的绝对 URL 统一重写为带前缀；off/空 = 关闭
+    c.url_prefix = getenv_str("URL_PREFIX", "");
+    if (c.url_prefix == "off") c.url_prefix.clear();
+    while (!c.url_prefix.empty() && c.url_prefix.back() == '/') c.url_prefix.pop_back();
+    if (!c.url_prefix.empty() && c.url_prefix.front() != '/') c.url_prefix = "/" + c.url_prefix;
 
     std::string models_dir = getenv_str("WEB_VLLM_MODELS_DIR", root + "/models");
     if (models_dir.empty()) models_dir = c.exe_dir + "/models";

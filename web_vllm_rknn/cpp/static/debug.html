@@ -48,6 +48,8 @@
         .hit-yes { background: #dc3545; color: white; }
         .hit-no { background: #e9ecef; color: #6c757d; }
         .hit-cool { background: #fff3cd; color: #856404; }
+        .hit-out { background: #cfe2ff; color: #084298; }
+        .hit-orient { background: #fde2cf; color: #b02a00; }
         .attr-chip {
             display: inline-block;
             padding: 2px 8px;
@@ -70,6 +72,7 @@
             <a href="/devices" class="nav-link">设备管理</a>
             <a href="/rules" class="nav-link">规则配置</a>
             <a href="/alerts" class="nav-link">告警记录</a>
+            <a href="/filters" class="nav-link">区域与过滤</a>
             <a href="/debug" class="nav-link active">调试捕获</a>
         </div>
     </nav>
@@ -89,6 +92,9 @@
             <p style="color:#6c757d; font-size: 13px; margin-top: 0;">
                 开关：<code>VLM_DEBUG_CAPTURE=1</code>（run_web_rk.sh 中设置后重启服务生效）。
                 开启后所有检测到的行人（无论是否命中规则）都会推送到这里，仅保留最新 1000 条。
+                配置了检测区域时，区域外行人也会推送（标<span class="hit-badge hit-out" style="font-size:0.75rem;">区域外</span>），
+                但只落图，不做 VLM 描述与规则匹配；被朝向过滤丢弃的命中会标
+                <span class="hit-badge hit-orient" style="font-size:0.75rem;">朝向不符</span> 并注明规则名。
             </p>
 
             <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
@@ -99,6 +105,9 @@
                     <option value="">全部检测</option>
                     <option value="hit">仅命中规则</option>
                     <option value="miss">仅未命中</option>
+                    <option value="orient">仅朝向不符</option>
+                    <option value="inside">仅区域内</option>
+                    <option value="outside">仅区域外</option>
                 </select>
                 <label style="display:flex; align-items:center; gap:0.4rem; color:#495057;">
                     <input type="checkbox" id="autoRefresh" checked> 自动刷新(5s)
@@ -176,8 +185,15 @@
 
             filteredEntries = allEntries.filter(e => {
                 if (deviceText && !(e.device_name || '').toLowerCase().includes(deviceText)) return false;
-                if (hitFilter === 'hit' && e.matched !== true) return false;
-                if (hitFilter === 'miss' && e.matched === true) return false;
+                const outside = e.outside_roi === true;
+                if (hitFilter === 'outside' && !outside) return false;
+                if (hitFilter === 'inside' && outside) return false;
+                if (hitFilter === 'orient' &&
+                    !(Array.isArray(e.orientation_filtered) && e.orientation_filtered.length))
+                    return false;
+                // 命中/未命中只针对区域内（区域外没做匹配，谈不上命中）
+                if (hitFilter === 'hit' && (outside || e.matched !== true)) return false;
+                if (hitFilter === 'miss' && (outside || e.matched === true)) return false;
                 return true;
             });
 
@@ -199,7 +215,7 @@
 
         const STATUS_LABEL = {
             hit: '命中', below_threshold: '未达阈', below_score_diff: '低于diff',
-            cooldown: '冷却', no_embedding: '无向量',
+            cooldown: '冷却', no_embedding: '无向量', orientation: '朝向不符',
         };
 
         // 逐规则得分明细：未命中规则也显示分数/阈值，符号规则附缺失属性
@@ -207,7 +223,8 @@
             if (!details || !details.length) return '';
             return details.map(d => {
                 const cls = d.status === 'hit' ? 'hit-yes'
-                          : (d.status === 'cooldown' ? 'hit-cool' : 'hit-no');
+                          : (d.status === 'cooldown' ? 'hit-cool'
+                          : (d.status === 'orientation' ? 'hit-orient' : 'hit-no'));
                 const score = (d.score == null) ? '—' : (d.score * 100).toFixed(1) + '%';
                 const thr = (d.threshold == null) ? '' :
                     `<span class="thr">/${(d.threshold * 100).toFixed(1)}%</span>`;
@@ -244,6 +261,11 @@
 
             tbody.innerHTML = pageEntries.map((e, i) => {
                 const idx = allEntries.indexOf(e);
+                const orientDropped = Array.isArray(e.orientation_filtered) && e.orientation_filtered.length > 0;
+                // 命中被朝向过滤整体丢弃：未命中徽章升级为「朝向不符」
+                const mainBadge = e.matched ? '<span class="hit-badge hit-yes">命中</span>'
+                              : (orientDropped ? '<span class="hit-badge hit-orient">朝向不符</span>'
+                                               : '<span class="hit-badge hit-no">未命中</span>');
                 const attrs = (e.attributes || []).map(a => `<span class="attr-chip">${esc(a)}</span>`).join('');
                 const descFull = e.description || '';
                 const zh = e.description_zh || '';
@@ -265,9 +287,11 @@
                     </td>
                     <td style="max-width:220px;">${attrs || '<span style="color:#bbb;">—</span>'}</td>
                     <td>
-                        ${details ? `<div style="margin-bottom:2px;">${e.matched ? '<span class="hit-badge hit-yes">命中</span>' : '<span class="hit-badge hit-no">未命中</span>'}</div>${details}`
-                                  : (e.matched ? `<span class="hit-badge hit-yes">命中</span><div style="margin-top:4px;font-size:12px;">${rules}</div>`
-                                               : '<span class="hit-badge hit-no">未命中</span>')}
+                        ${e.outside_roi ? '<span class="hit-badge hit-out">区域外</span><div style="margin-top:2px;font-size:12px;color:#888;">未做 VLM 描述/匹配</div>'
+                          : details ? `<div style="margin-bottom:2px;">${mainBadge}</div>${details}`
+                          : (e.matched ? `<span class="hit-badge hit-yes">命中</span><div style="margin-top:4px;font-size:12px;">${rules}</div>`
+                                       : orientDropped ? `${mainBadge}<div style="margin-top:4px;font-size:12px;">${e.orientation_filtered.map(esc).join('<br>')}</div>`
+                                                       : '<span class="hit-badge hit-no">未命中</span>')}
                     </td>
                     <td style="white-space:nowrap;font-size:13px;">${formatTime(e.timestamp)}</td>
                 </tr>`;
@@ -304,7 +328,11 @@
             }).join('') : '';
             document.getElementById('modalInfo').innerHTML = `
                 <p><strong>设备名称:</strong> ${esc(e.device_name)}　<strong>时间:</strong> ${formatTime(e.timestamp)}</p>
-                <p><strong>BBox:</strong> [${(e.bbox || []).join(', ')}]${e.low_quality ? '　<span style="color:#999;">低质量</span>' : ''}</p>
+                <p><strong>BBox:</strong> [${(e.bbox || []).join(', ')}]${e.low_quality ? '　<span style="color:#999;">低质量</span>' : ''}
+                   ${e.outside_roi ? '　<span class="hit-badge hit-out">区域外</span> <span style="color:#888;font-size:13px;">行人不在检测区域内，仅留存图像，未做 VLM 描述与规则匹配</span>' : ''}</p>
+                ${Array.isArray(e.orientation_filtered) && e.orientation_filtered.length ? `
+                <p style="color:#b02a00;"><span class="hit-badge hit-orient">朝向不符</span>
+                   朝向不在设备勾选范围，丢弃命中规则：${e.orientation_filtered.map(esc).join('、')}</p>` : ''}
                 <div style="margin:0.5rem 0;">
                     <strong>描述:</strong>
                     <p style="margin:0.3rem 0 0 0;color:#333;line-height:1.5;">${esc(e.description) || '（空）'}</p>
@@ -312,7 +340,8 @@
                 </div>
                 <div style="margin:0.5rem 0;"><strong>属性:</strong><br>${attrs || '—'}</div>
                 <div style="margin:0.5rem 0;"><strong>规则明细（分数/阈值，含未命中）:</strong><br>
-                    ${detailsFull || (rules ? `<div style="margin:0.2rem 0;">命中规则:<br>${rules}</div>` : '未命中（无逐规则明细，可能为旧记录）')}</div>
+                    ${detailsFull || (rules ? `<div style="margin:0.2rem 0;">命中规则:<br>${rules}</div>`
+                        : (e.outside_roi ? '—（区域外行人，未做匹配）' : '未命中（无逐规则明细，可能为旧记录）')}</div>
             `;
             document.getElementById('imageModal').style.display = 'flex';
         }
