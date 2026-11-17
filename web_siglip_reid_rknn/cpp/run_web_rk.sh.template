@@ -14,7 +14,7 @@ export SIGLIP_SP_MODEL="${SIGLIP_SP_MODEL:-$HERE/models/tokenizer.model}"
 export RKNN_SIGLIP_CORE_NUM="${RKNN_SIGLIP_CORE_NUM:-1}"
 
 # 分值尺度：SigLIP 正确属性 ~0.15-0.22、无关 ~0（PETA 实测）。规则可逐条覆盖 threshold。
-export SIGLIP_DEFAULT_THRESHOLD="${SIGLIP_DEFAULT_THRESHOLD:-0.15}"
+export SIGLIP_DEFAULT_THRESHOLD="${SIGLIP_DEFAULT_THRESHOLD:-0.2}"
 
 # YOLOv8n 检测（沿用 web_vllm_rknn 的 NPU 产物）
 export DETECTOR_ONNX_PATH="${DETECTOR_ONNX_PATH:-$HERE/models/yolov8n_640_rk3588.rknn}"
