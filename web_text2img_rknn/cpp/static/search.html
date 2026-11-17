@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MARS Text→Image Search</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { background: #1f2937; color: #fff; padding: 14px 20px; font-size: 17px; }
+  header small { color: #9ca3af; margin-left: 10px; }
+  main { max-width: 1200px; margin: 20px auto; padding: 0 16px; }
+  .bar { display: flex; gap: 8px; margin-bottom: 6px; }
+  input[type=text] { flex: 1; padding: 10px 12px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  input[type=number] { width: 70px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  button { padding: 10px 18px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-size: 15px; cursor: pointer; }
+  button.gray { background: #6b7280; }
+  button:disabled { background: #9ca3af; cursor: wait; }
+  .hint { color: #6b7280; font-size: 13px; margin: 4px 0 16px; }
+  #status { font-size: 13px; color: #4b5563; margin: 8px 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .card { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .card img { width: 100%; height: 150px; object-fit: cover; display: block; }
+  .card .meta { padding: 6px 8px; font-size: 12px; color: #374151; word-break: break-all; }
+  .card .score { color: #2563eb; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>MARS Text→Image Search <small>英文描述 · RK3588 NPU</small></header>
+<main>
+  <div class="bar">
+    <input id="q" type="text" placeholder='e.g. a woman in a white short-sleeve shirt and black trousers'>
+    <input id="k" type="number" min="1" max="100" value="12">
+    <button id="go">Search</button>
+    <button id="up" class="gray">Upload to gallery</button>
+    <input id="file" type="file" accept="image/*" style="display:none">
+  </div>
+  <div class="hint">查询用英文描述（模型训练于 CUHK-PEDES，服务端自动做小写/去标点清洗）。</div>
+  <div id="status"></div>
+  <div id="grid" class="grid"></div>
+</main>
+<script>
+// 前缀自适应：服务挂在反向代理 /xxx/ 下也能工作（相对当前页面目录取 API）
+const BASE = location.pathname.replace(/\/[^/]*$/, '/');
+const $ = id => document.getElementById(id);
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(BASE + 'api/status').then(x => x.json());
+    $('status').textContent = `gallery: ${r.gallery_size} 张` +
+      (r.building ? '（后台建库中…）' : '') + `  |  ${r.gallery_dir}`;
+  } catch (e) { $('status').textContent = 'status: ' + e; }
+}
+
+async function search() {
+  const text = $('q').value.trim();
+  if (!text) return;
+  $('go').disabled = true;
+  try {
+    const r = await fetch(BASE + 'api/search', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, topk: parseInt($('k').value) || 12})
+    }).then(x => x.json());
+    if (r.error) { $('status').textContent = 'error: ' + r.error; return; }
+    $('status').textContent = `${r.results.length} hits in ${r.elapsed_ms} ms (gallery ${r.gallery_size})`;
+    $('grid').innerHTML = r.results.map(h => `
+      <div class="card">
+        <img loading="lazy" src="${BASE.replace(/\/$/, '')}${h.url}">
+        <div class="meta"><span class="score">${h.score.toFixed(4)}</span> ${h.file}</div>
+      </div>`).join('');
+  } finally { $('go').disabled = false; }
+}
+
+async function upload(f) {
+  const fd = new FormData();
+  fd.append('image', f, f.name);
+  $('up').disabled = true;
+  try {
+    const r = await fetch(BASE + 'api/enroll', {method: 'POST', body: fd}).then(x => x.json());
+    $('status').textContent = r.success ? `已入库 ${r.file}（gallery ${r.gallery_size}）` : 'upload failed: ' + r.error;
+  } finally { $('up').disabled = false; }
+}
+
+$('go').onclick = search;
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+$('up').onclick = () => $('file').click();
+$('file').onchange = e => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value=''; };
+refreshStatus(); setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>

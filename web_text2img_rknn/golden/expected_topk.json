@@ -1,0 +1,812 @@
+[
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 years old viewed fr",
+  "topk": [
+   {
+    "file": "000005.jpg",
+    "score": 0.7479
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.7172
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.6061
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.5571
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.5041
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.4133
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.4014
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3754
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.3342
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.3274
+   }
+  ]
+ },
+ {
+  "query": "the image depicts an individual walking on a street wearing a black long sleeve ",
+  "topk": [
+   {
+    "file": "000002.jpg",
+    "score": 0.5157
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.3776
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.2744
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.2627
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.2621
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.2396
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.235
+   },
+   {
+    "file": "000009.jpg",
+    "score": 0.2265
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.2119
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.1926
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 years old viewed fr",
+  "topk": [
+   {
+    "file": "000001.jpg",
+    "score": 0.519
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.5136
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.4871
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4423
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.424
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.4068
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3859
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.2899
+   },
+   {
+    "file": "000009.jpg",
+    "score": 0.277
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.2651
+   }
+  ]
+ },
+ {
+  "query": "the image shows a person standing with their back facing the camera the individu",
+  "topk": [
+   {
+    "file": "000004.jpg",
+    "score": 0.7505
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4141
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.3878
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.3747
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3423
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.3391
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.3364
+   },
+   {
+    "file": "000010.jpg",
+    "score": 0.3293
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.3074
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.2879
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 viewed from the sid",
+  "topk": [
+   {
+    "file": "000005.jpg",
+    "score": 0.6974
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.5835
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.5612
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4728
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.4057
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.3964
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.3898
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3466
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3352
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.3098
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a young individual likely under the age of 18 wearing a white ",
+  "topk": [
+   {
+    "file": "000006.jpg",
+    "score": 0.725
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.6282
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3947
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.2911
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.2798
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.2736
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.2696
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.2496
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.2072
+   },
+   {
+    "file": "000009.jpg",
+    "score": 0.2049
+   }
+  ]
+ },
+ {
+  "query": "the image shows a pedestrian with the following characteristics the individual a",
+  "topk": [
+   {
+    "file": "000007.jpg",
+    "score": 0.7127
+   },
+   {
+    "file": "000016.jpg",
+    "score": 0.468
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4314
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.4108
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.3838
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.3429
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.3421
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.3085
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3084
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.2931
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 viewed from behind ",
+  "topk": [
+   {
+    "file": "000008.jpg",
+    "score": 0.7079
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.4796
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4698
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.439
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.4273
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.3892
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.3256
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3131
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.3061
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3054
+   }
+  ]
+ },
+ {
+  "query": "the image depicts an individual walking away from the camera wearing a dark jack",
+  "topk": [
+   {
+    "file": "000009.jpg",
+    "score": 0.7664
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.408
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3838
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3437
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.2964
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.2383
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.2255
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.1667
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.1373
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.1325
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a person standing outdoors on a paved surface facing away from",
+  "topk": [
+   {
+    "file": "000010.jpg",
+    "score": 0.7499
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.4869
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.4718
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.46
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.3581
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.3499
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.2869
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.2548
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.2378
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.2178
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a young individual likely male appearing to be under 18 years ",
+  "topk": [
+   {
+    "file": "000011.jpg",
+    "score": 0.6652
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.6274
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.4548
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4278
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.3905
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3822
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.3822
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.2784
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.2025
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.1918
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 years old viewed fr",
+  "topk": [
+   {
+    "file": "000012.jpg",
+    "score": 0.6638
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.4616
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.3927
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.3864
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.3809
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.3458
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.3402
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.305
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.2981
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.2878
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 viewed from behind ",
+  "topk": [
+   {
+    "file": "000013.jpg",
+    "score": 0.6884
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.598
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.5396
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.4507
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.443
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4152
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.3865
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.3797
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.3658
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.3179
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a female pedestrian aged between 18 and 60 viewed from the sid",
+  "topk": [
+   {
+    "file": "000014.jpg",
+    "score": 0.7205
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.4603
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.4485
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.4468
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.4329
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.3969
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.372
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.3627
+   },
+   {
+    "file": "000001.jpg",
+    "score": 0.325
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.3226
+   }
+  ]
+ },
+ {
+  "query": "the image depicts a male pedestrian aged between 18 and 60 wearing glasses a blu",
+  "topk": [
+   {
+    "file": "000015.jpg",
+    "score": 0.7643
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.4358
+   },
+   {
+    "file": "000002.jpg",
+    "score": 0.4188
+   },
+   {
+    "file": "000009.jpg",
+    "score": 0.3989
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.3024
+   },
+   {
+    "file": "000003.jpg",
+    "score": 0.2932
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.2811
+   },
+   {
+    "file": "000010.jpg",
+    "score": 0.2582
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.2549
+   },
+   {
+    "file": "000005.jpg",
+    "score": 0.2439
+   }
+  ]
+ },
+ {
+  "query": "the image shows a male pedestrian aged between 18 and 60 years old viewed from b",
+  "topk": [
+   {
+    "file": "000016.jpg",
+    "score": 0.7979
+   },
+   {
+    "file": "000007.jpg",
+    "score": 0.323
+   },
+   {
+    "file": "000006.jpg",
+    "score": 0.3077
+   },
+   {
+    "file": "000004.jpg",
+    "score": 0.3048
+   },
+   {
+    "file": "000014.jpg",
+    "score": 0.2802
+   },
+   {
+    "file": "000012.jpg",
+    "score": 0.2324
+   },
+   {
+    "file": "000011.jpg",
+    "score": 0.2215
+   },
+   {
+    "file": "000015.jpg",
+    "score": 0.1196
+   },
+   {
+    "file": "000008.jpg",
+    "score": 0.1026
+   },
+   {
+    "file": "000013.jpg",
+    "score": 0.0961
+   }
+  ]
+ },
+ {
+  "query": "man with red jacket and backpack",
+  "topk": [
+   {
+    "file": "000006.jpg",
+    "score": -0.0406
+   },
+   {
+    "file": "000011.jpg",
+    "score": -0.0688
+   },
+   {
+    "file": "000015.jpg",
+    "score": -0.0795
+   },
+   {
+    "file": "000009.jpg",
+    "score": -0.0799
+   },
+   {
+    "file": "000012.jpg",
+    "score": -0.1246
+   },
+   {
+    "file": "000002.jpg",
+    "score": -0.1247
+   },
+   {
+    "file": "000014.jpg",
+    "score": -0.1408
+   },
+   {
+    "file": "000005.jpg",
+    "score": -0.1586
+   },
+   {
+    "file": "000013.jpg",
+    "score": -0.1755
+   },
+   {
+    "file": "000004.jpg",
+    "score": -0.1823
+   }
+  ]
+ },
+ {
+  "query": "person wearing black coat carrying handbag",
+  "topk": [
+   {
+    "file": "000014.jpg",
+    "score": -0.1253
+   },
+   {
+    "file": "000009.jpg",
+    "score": -0.1348
+   },
+   {
+    "file": "000002.jpg",
+    "score": -0.1418
+   },
+   {
+    "file": "000006.jpg",
+    "score": -0.1545
+   },
+   {
+    "file": "000011.jpg",
+    "score": -0.1656
+   },
+   {
+    "file": "000003.jpg",
+    "score": -0.1764
+   },
+   {
+    "file": "000015.jpg",
+    "score": -0.1781
+   },
+   {
+    "file": "000005.jpg",
+    "score": -0.1781
+   },
+   {
+    "file": "000013.jpg",
+    "score": -0.1898
+   },
+   {
+    "file": "000001.jpg",
+    "score": -0.2199
+   }
+  ]
+ }
+]

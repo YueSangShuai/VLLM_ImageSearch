@@ -1,0 +1,14 @@
+#!/bin/bash
+# 板端启动脚本（env 注入 + exec）。同名变量可在外部 export 覆盖。
+cd "$(dirname "$0")"
+export WEB_VLLM_ROOT="${WEB_VLLM_ROOT:-$PWD}"
+export WEB_VLLM_PORT="${WEB_VLLM_PORT:-5005}"
+export WEB_VLLM_DATA_DIR="${WEB_VLLM_DATA_DIR:-$PWD/data}"
+export WEB_VLLM_STATIC_DIR="${WEB_VLLM_STATIC_DIR:-$PWD/static}"
+export WEB_VLLM_MODELS_DIR="${WEB_VLLM_MODELS_DIR:-$PWD/models}"
+export GALLERY_DIR="${GALLERY_DIR:-$PWD/gallery}"
+export MARS_TEXT_MAX_LEN="${MARS_TEXT_MAX_LEN:-128}"
+export RKNN_MARS_CORE_NUM="${RKNN_MARS_CORE_NUM:-1}"
+export URL_PREFIX="${URL_PREFIX:-}"
+export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"
+exec ./web_text2img
