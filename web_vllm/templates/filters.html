@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>区域与过滤 - 多模态文搜平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .filter-grid { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; align-items: start; }
+        @media (max-width: 900px) { .filter-grid { grid-template-columns: 1fr; } }
+        #previewWrap { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+        #previewImg { width: 100%; display: block; user-select: none; -webkit-user-drag: none; }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            cursor: crosshair; touch-action: none;
+        }
+        .hint { color: #666; font-size: 0.85rem; margin: 0.5rem 0 0; }
+        .region-list { list-style: none; padding: 0; margin: 0.5rem 0; }
+        .region-list li {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.35rem 0.5rem; background: #f8f9fa; border-radius: 6px; margin-bottom: 0.35rem;
+            font-size: 0.85rem;
+        }
+        .field { margin-bottom: 0.9rem; }
+        .field label { display: block; font-weight: 600; margin-bottom: 0.3rem; font-size: 0.9rem; }
+        .field .sub { color: #666; font-weight: 400; font-size: 0.8rem; }
+        .field input[type="checkbox"] { margin-right: 0.3rem; }
+        .cb-inline { display: inline-block; margin-right: 1.2rem; font-weight: 400 !important; }
+        .num-row input { width: 90px; padding: 0.3rem 0.5rem; border: 1px solid #ccc; border-radius: 6px; }
+        .num-row span { margin: 0 0.5rem 0 0.2rem; color: #666; }
+        select.device-select { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem; }
+        #saveMsg { margin-left: 0.6rem; font-size: 0.9rem; }
+        #saveMsg.ok { color: #1a7f37; } #saveMsg.err { color: #c0392b; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">多模态大模型文搜实测平台</div>
+        <div class="nav-links">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/devices" class="nav-link">设备管理</a>
+            <a href="/rules" class="nav-link">规则配置</a>
+            <a href="/alerts" class="nav-link">告警记录</a>
+            <a href="/filters" class="nav-link active">区域与过滤</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2>检测区域与过滤配置（按设备）</h2>
+            </div>
+            <div class="field">
+                <label>设备通道</label>
+                <select id="deviceSelect" class="device-select" onchange="onDeviceChange()"></select>
+            </div>
+
+            <div class="field">
+                <label>画法 <span class="sub">两种可混用，命中任一区域即继续检测</span></label>
+                <label class="cb-inline"><input type="radio" name="drawMode" id="modeRect" value="rect" checked onchange="setMode('rect')">矩形（按住拖拽）</label>
+                <label class="cb-inline"><input type="radio" name="drawMode" id="modePoly" value="poly" onchange="setMode('poly')">不规则区域（逐点点击）</label>
+            </div>
+
+            <div class="filter-grid">
+                <div>
+                    <div id="previewWrap">
+                        <img id="previewImg" alt="实时预览" onload="onPreviewLoad()">
+                        <canvas id="overlay" width="640" height="480"></canvas>
+                    </div>
+                    <p class="hint" id="drawHint">矩形画法：<b>按住鼠标拖拽</b>框选，判定看<b>行人框中心点</b>。</p>
+                    <p class="hint">不规则区域判定看<b>脚点（行人框底边中点）</b>—— 区域要圈到人行走的<b>地面</b>，
+                        只圈画面上半身可见的部分会漏检。两类区域都清空 = 全图检测。
+                        设备离线时预览是占位黑图，此时画的区域仅供参考。</p>
+                </div>
+
+                <div>
+                    <div class="field">
+                        <label>检测区域（ROI） <span class="sub">矩形看框中心，不规则区域看脚点</span></label>
+                        <ul id="regionList" class="region-list"></ul>
+                        <button class="btn btn-small btn-secondary" onclick="undoVertex()" id="undoBtn" style="display:none">撤销上一个顶点</button>
+                        <button class="btn btn-small btn-danger" onclick="clearRegions()">清空全部区域</button>
+                    </div>
+
+                    <div class="field">
+                        <label>人体朝向过滤 <span class="sub">全不勾 = 不限（属性头判不出朝向时不误杀）</span></label>
+                        <label class="cb-inline"><input type="checkbox" id="orientFront" value="Front">正面</label>
+                        <label class="cb-inline"><input type="checkbox" id="orientSide" value="Side">侧面</label>
+                        <label class="cb-inline"><input type="checkbox" id="orientBack" value="Back">背面</label>
+                    </div>
+
+                    <div class="field">
+                        <label>低质量尺寸阈值 <span class="sub">行人框宽或高低于阈值仅页面标注📷低质量，照常告警</span></label>
+                        <div class="num-row">
+                            <label style="display:inline">最小宽</label>
+                            <input type="number" id="minBoxW" min="0" max="4096" placeholder="64"><span>px</span>
+                            <label style="display:inline">最小高</label>
+                            <input type="number" id="minBoxH" min="0" max="4096" placeholder="32"><span>px</span>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+                        <button class="btn btn-secondary" onclick="loadConfig()">重新加载</button>
+                        <span id="saveMsg"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let devices = [];
+        let regions = [];            // 归一化矩形 [{x,y,w,h}]
+        let polys = [];              // 归一化不规则区域 [[{x,y},...], ...]，隐式闭合
+        let pending = [];            // 正在画的多边形顶点
+        let mouse = null;            // 橡皮筋端点
+        let mode = 'rect';           // rect | poly
+        let currentDeviceId = null;
+        let pollTimer = null;
+        let drawing = null;          // {x0,y0,x1,y1} 归一化拖拽中
+
+        const img = document.getElementById('previewImg');
+        const canvas = document.getElementById('overlay');
+        const ctx = canvas.getContext('2d');
+
+        async function init() {
+            const res = await fetch('/api/devices');
+            devices = await res.json();
+            const sel = document.getElementById('deviceSelect');
+            sel.innerHTML = devices.map(d => `<option value="${d.id}">${d.name || d.id}</option>`).join('');
+            if (devices.length) onDeviceChange();
+        }
+
+        function onDeviceChange() {
+            currentDeviceId = document.getElementById('deviceSelect').value;
+            loadConfig();
+            startPolling();
+        }
+
+        function startPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            const update = () => {
+                if (currentDeviceId) img.src = '/api/video/frame/' + currentDeviceId + '?t=' + Date.now();
+            };
+            update();
+            pollTimer = setInterval(update, 1500);
+        }
+
+        // ---- 配置加载/回填 ----
+        async function loadConfig() {
+            if (!currentDeviceId) return;
+            const dev = devices.find(d => d.id === currentDeviceId);
+            if (!dev) return;
+            regions = Array.isArray(dev.roi_regions) ? dev.roi_regions.map(r => ({
+                x: +r.x, y: +r.y, w: +r.w, h: +r.h
+            })).filter(r => [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 0 && r.h > 0) : [];
+            polys = Array.isArray(dev.roi_polygons) ? dev.roi_polygons
+                .map(p => (Array.isArray(p) ? p : [])
+                    .map(v => (v && typeof v === 'object') ? { x: +v.x, y: +v.y } : { x: NaN, y: NaN })
+                    .filter(v => Number.isFinite(v.x) && Number.isFinite(v.y)))
+                .filter(p => p.length >= 3) : [];
+            pending = [];
+            mouse = null;
+            const allowed = Array.isArray(dev.orientation_filter) ? dev.orientation_filter : [];
+            document.getElementById('orientFront').checked = allowed.includes('Front');
+            document.getElementById('orientSide').checked = allowed.includes('Side');
+            document.getElementById('orientBack').checked = allowed.includes('Back');
+            document.getElementById('minBoxW').value = dev.min_box_w ?? '';
+            document.getElementById('minBoxH').value = dev.min_box_h ?? '';
+            syncUndoBtn();
+            renderRegionList();
+            redraw();
+        }
+
+        // ---- 保存 ----
+        async function saveConfig() {
+            const msg = document.getElementById('saveMsg');
+            if (!currentDeviceId) return;
+            if (pending.length) {
+                msg.textContent = '有不规则区域还没闭合（点回起点结束），请先处理再保存';
+                msg.className = 'err';
+                setTimeout(() => { msg.textContent = ''; }, 4000);
+                return;
+            }
+            const body = {
+                roi_regions: regions,
+                roi_polygons: polys,
+                orientation_filter: ['Front', 'Side', 'Back'].filter(o =>
+                    document.getElementById({ Front: 'orientFront', Side: 'orientSide', Back: 'orientBack' }[o]).checked),
+            };
+            const bw = document.getElementById('minBoxW').value;
+            const bh = document.getElementById('minBoxH').value;
+            if (bw !== '') body.min_box_w = parseInt(bw, 10);
+            if (bh !== '') body.min_box_h = parseInt(bh, 10);
+            try {
+                const res = await fetch('/api/devices/' + currentDeviceId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const j = await res.json();
+                if (j.success) {
+                    const dev = devices.find(d => d.id === currentDeviceId);
+                    if (dev) Object.assign(dev, body);
+                    msg.textContent = '已保存，运行中的检测约 1 秒内生效';
+                    msg.className = 'ok';
+                } else throw new Error();
+            } catch (e) {
+                msg.textContent = '保存失败';
+                msg.className = 'err';
+            }
+            setTimeout(() => { msg.textContent = ''; }, 4000);
+        }
+
+        // ---- 画布框选 ----
+        function normPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+                y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+            };
+        }
+        function setMode(m) {
+            mode = m;
+            pending = [];          // 切画法时丢掉未闭合的笔，免得被误当成区域存下去
+            mouse = null;
+            syncUndoBtn();
+            document.getElementById('drawHint').innerHTML = m === 'poly'
+                ? '不规则区域画法：<b>逐点单击</b>落顶点，<b>点回第一个点</b>或双击闭合（至少 3 点）；' +
+                  'Backspace 撤销上一点，Esc / 右键取消当前笔。判定看<b>脚点</b>，记得圈到地面。'
+                : '矩形画法：<b>按住鼠标拖拽</b>框选，判定看<b>行人框中心点</b>。';
+            redraw();
+        }
+
+        // 画布像素距离 → 归一化距离比较用的辅助：把两点差换算成 CSS 像素
+        function pxDist(a, b) {
+            const rect = canvas.getBoundingClientRect();
+            return Math.hypot((a.x - b.x) * rect.width, (a.y - b.y) * rect.height);
+        }
+        function syncUndoBtn() {
+            document.getElementById('undoBtn').style.display =
+                (mode === 'poly' && pending.length) ? '' : 'none';
+        }
+        function closePoly() {
+            polys.push(pending.map(v => ({ x: v.x, y: v.y })));
+            pending = [];
+            syncUndoBtn();
+            renderRegionList();
+            redraw();
+        }
+        function cancelPoly() { pending = []; syncUndoBtn(); redraw(); }
+        function undoVertex() { if (pending.length) pending.pop(); syncUndoBtn(); redraw(); }
+
+        canvas.addEventListener('mousedown', e => {
+            if (mode !== 'rect' || e.button !== 0) return;
+            const p = normPos(e);
+            drawing = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+        });
+        canvas.addEventListener('mousemove', e => {
+            mouse = normPos(e);
+            if (mode === 'rect' && drawing) { drawing.x1 = mouse.x; drawing.y1 = mouse.y; }
+            redraw();
+        });
+        canvas.addEventListener('mouseleave', () => { mouse = null; redraw(); });
+        window.addEventListener('mouseup', () => {
+            if (!drawing) return;
+            const r = {
+                x: Math.min(drawing.x0, drawing.x1), y: Math.min(drawing.y0, drawing.y1),
+                w: Math.abs(drawing.x1 - drawing.x0), h: Math.abs(drawing.y1 - drawing.y0),
+            };
+            drawing = null;
+            if (r.w > 0.01 && r.h > 0.01) regions.push(r);   // 过小的误点丢弃
+            renderRegionList();
+            redraw();
+        });
+
+        // ---- 不规则区域：逐点点击 ----
+        canvas.addEventListener('click', e => {
+            if (mode !== 'poly') return;
+            const p = normPos(e);
+            if (pending.length >= 3 && pxDist(p, pending[0]) < 12) { closePoly(); return; }  // 点回起点闭合
+            const last = pending[pending.length - 1];
+            if (last && pxDist(p, last) < 4) { redraw(); return; }  // 双击连发的重复点
+            pending.push(p);
+            syncUndoBtn();
+            redraw();
+        });
+        canvas.addEventListener('dblclick', () => {
+            if (mode === 'poly' && pending.length >= 3) closePoly();
+        });
+        canvas.addEventListener('contextmenu', e => {
+            if (mode !== 'poly') return;
+            e.preventDefault();
+            cancelPoly();
+        });
+        window.addEventListener('keydown', e => {
+            if (mode !== 'poly' || !pending.length) return;
+            if (e.key === 'Escape') cancelPoly();
+            else if (e.key === 'Backspace') { e.preventDefault(); undoVertex(); }
+        });
+
+        function onPreviewLoad() {
+            // 画布分辨率对齐显示尺寸，保证叠加位置正确
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = img.clientWidth * dpr;
+            canvas.height = img.clientHeight * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            redraw();
+        }
+
+        function redraw() {
+            const w = img.clientWidth || canvas.width, h = img.clientHeight || canvas.height;
+            ctx.clearRect(0, 0, w, h);
+            const rects = drawing
+                ? regions.concat([{ x: Math.min(drawing.x0, drawing.x1), y: Math.min(drawing.y0, drawing.y1),
+                                    w: Math.abs(drawing.x1 - drawing.x0), h: Math.abs(drawing.y1 - drawing.y0) }])
+                : regions;
+            rects.forEach((r, i) => {
+                ctx.fillStyle = 'rgba(231, 76, 60, 0.15)';
+                ctx.strokeStyle = '#e74c3c';
+                ctx.lineWidth = 2;
+                ctx.fillRect(r.x * w, r.y * h, r.w * w, r.h * h);
+                ctx.strokeRect(r.x * w, r.y * h, r.w * w, r.h * h);
+                ctx.fillStyle = '#e74c3c';
+                ctx.font = '14px sans-serif';
+                ctx.fillText(String(i + 1), r.x * w + 4, r.y * h + 16);
+            });
+
+            // 不规则区域：已完成的实心，正在画的虚线 + 跟随鼠标的橡皮筋
+            const shapes = polys.concat(pending.length >= 2 ? [pending] : []);
+            shapes.forEach((p, i) => {
+                const done = i < polys.length;
+                ctx.beginPath();
+                p.forEach((v, k) => k ? ctx.lineTo(v.x * w, v.y * h) : ctx.moveTo(v.x * w, v.y * h));
+                if (done) {
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(41, 128, 185, 0.15)';
+                    ctx.fill();
+                } else {
+                    ctx.setLineDash([6, 4]);
+                }
+                ctx.strokeStyle = '#2980b9';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#2980b9';
+                ctx.fillText(String(regions.length + i + 1), p[0].x * w + 6, p[0].y * h + 16);
+                p.forEach((v, k) => {
+                    // 起点画大圆点，提示「点它即可闭合」
+                    ctx.beginPath();
+                    ctx.arc(v.x * w, v.y * h, (!done && k === 0) ? 6 : 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#2980b9';
+                    ctx.fill();
+                });
+            });
+            if (mode === 'poly' && pending.length && mouse) {
+                const last = pending[pending.length - 1];
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(last.x * w, last.y * h);
+                ctx.lineTo(mouse.x * w, mouse.y * h);
+                ctx.strokeStyle = '#2980b9';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        // ---- 区域列表 ----
+        function renderRegionList() {
+            const ul = document.getElementById('regionList');
+            if (!regions.length && !polys.length) {
+                ul.innerHTML = '<li>（无区域 = 全图检测）</li>';
+                return;
+            }
+            const items = [];
+            regions.forEach((r, i) => items.push(
+                `<li><span>矩形 ${i + 1}：x ${(r.x * 100).toFixed(0)}% y ${(r.y * 100).toFixed(0)}% ` +
+                `${(r.w * 100).toFixed(0)}%×${(r.h * 100).toFixed(0)}%</span>` +
+                `<button class="btn btn-small btn-danger" onclick="removeRegion(${i})">删除</button></li>`));
+            polys.forEach((p, i) => items.push(
+                `<li><span>不规则 ${regions.length + i + 1}：${p.length} 顶点</span>` +
+                `<button class="btn btn-small btn-danger" onclick="removePoly(${i})">删除</button></li>`));
+            ul.innerHTML = items.join('');
+        }
+        function removeRegion(i) { regions.splice(i, 1); renderRegionList(); redraw(); }
+        function removePoly(i) { polys.splice(i, 1); renderRegionList(); redraw(); }
+        function clearRegions() {
+            regions = []; polys = []; pending = [];
+            syncUndoBtn(); renderRegionList(); redraw();
+        }
+
+        window.addEventListener('resize', onPreviewLoad);
+        init();
+    </script>
+</body>
+</html>

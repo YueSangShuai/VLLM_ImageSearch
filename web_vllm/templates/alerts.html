@@ -95,6 +95,9 @@
                     <option value="lowquality">低质量</option>
                     <option value="lowquality_safe">低质量非高危</option>
                 </select>
+                <select id="filterDate" onchange="onDateChange()" title="按日期查看告警存档"
+                        style="padding: 0.5rem; border: 1px solid #ced4da; border-radius: 6px; min-width: 130px;">
+                </select>
                 <button class="btn btn-small" onclick="clearFilters()">清除筛选</button>
                 <span style="color: #6c757d; margin-left: auto;">共 <span id="totalCount">0</span> 条记录</span>
             </div>
@@ -149,9 +152,41 @@
         let currentPage = 1;
         const pageSize = 20;
 
+        let alertDate = '';  // '' = 今天；其他为 YYYY-MM-DD（按天存档切换）
+
+        function dateQuery() {
+            return alertDate ? `?date=${alertDate}` : '';
+        }
+
+        async function loadDateOptions() {
+            try {
+                const res = await fetch('/api/alerts/dates');
+                const dates = await res.json();
+                const sel = document.getElementById('filterDate');
+                sel.innerHTML = dates.map(d => {
+                    const label = d === dates[0] && d === todayStr() ? `${d}（今天）` : d;
+                    return `<option value="${d === dates[0] ? '' : d}">${label}</option>`;
+                }).join('');
+            } catch (e) {
+                console.error('加载日期列表失败:', e);
+            }
+        }
+
+        function todayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        async function onDateChange() {
+            alertDate = document.getElementById('filterDate').value;
+            await loadDateOptions();  // 保留列表，恢复选中值由 value 匹配
+            document.getElementById('filterDate').value = alertDate;
+            await loadAlerts();
+        }
+
         async function loadAlerts() {
             try {
-                const res = await fetch('/api/alerts');
+                const res = await fetch('/api/alerts' + dateQuery());
                 allAlerts = await res.json();
                 filterAlerts();
             } catch (e) {
@@ -345,7 +380,7 @@
 
         async function deleteAlert(id) {
             if (!confirm('确定要删除这个告警吗？')) return;
-            const res = await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/alerts/${id}${dateQuery()}`, { method: 'DELETE' });
             if (res.ok) {
                 allAlerts = allAlerts.filter(a => a.id !== id);
                 renderAlerts();
@@ -353,8 +388,8 @@
         }
 
         async function clearAlerts() {
-            if (!confirm('确定要清空所有告警记录吗？此操作不可恢复。')) return;
-            const res = await fetch('/api/alerts/clear', { method: 'POST' });
+            if (!confirm(`确定要清空${alertDate ? ' ' + alertDate + ' ' : '当天'}的告警记录吗？此操作不可恢复。`)) return;
+            const res = await fetch(`/api/alerts/clear${dateQuery()}`, { method: 'POST' });
             if (res.ok) {
                 allAlerts = [];
                 renderAlerts();
@@ -397,7 +432,7 @@
         // 加载数据但不重置页码
         async function refreshAlerts() {
             try {
-                const res = await fetch('/api/alerts');
+                const res = await fetch('/api/alerts' + dateQuery());
                 allAlerts = await res.json();
                 // 重新筛选但保持当前页码
                 filterAlerts(false);
@@ -409,6 +444,7 @@
         // 自动刷新
         setInterval(refreshAlerts, 5000);
 
+        loadDateOptions();
         loadAlerts();
     </script>
 </body>

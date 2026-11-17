@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <utility>
 
 struct ImageRGB {
     int w = 0, h = 0;
@@ -20,6 +21,9 @@ ImageRGB resize_bilinear(const ImageRGB &src, int nw, int nh);
 
 // 在原图 RGB 上画绿色矩形（对应 cv2.rectangle thickness=2 color=(0,255,0) BGR）
 void draw_rect(ImageRGB &img, int x1, int y1, int x2, int y2);
+
+// 青色折线/闭合多边形（RGB 0,200,255），与绿色人框区分。close=true 时末点连回首点。
+void draw_polyline(ImageRGB &img, const std::vector<std::pair<int, int>> &pts, bool close);
 
 // 占位图（640x480 纯黑 JPEG，对应 serve_placeholder 无文字版）
 std::vector<uint8_t> placeholder_jpeg();

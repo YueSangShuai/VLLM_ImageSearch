@@ -7,6 +7,7 @@
 #include "text_embedder.h"
 #include "vlm_describer.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,7 +21,8 @@ public:
     ~Monitor();
 
     json start();            // {"success":true,"message":"已启动 N 个设备监控"}
-    json refreshRules();     // 重新读 tasks.json 并刷新各设备规则
+    json refreshRules();     // 重新读 tasks.json/devices.json 并刷新各设备规则与配置
+    void refreshRulesAsync();// 后台线程执行 refreshRules，HTTP 线程零等待
     json stop();
 
     bool isRunning() const;
@@ -40,12 +42,16 @@ private:
     json devices_ = json::array();          // devices.json 快照（DeviceManager.load_devices）
     json tasks_ = json::array();
 
+    // shared_ptr：refreshRules 在锁外取 runner->matcher/proc 做更新时，
+    // 即便并发 stopDevice 已从 map 摘除，引用计数也保证其存活到本轮刷完
     struct Runner {
         std::unique_ptr<Matcher> matcher;
         std::unique_ptr<StreamProcessor> proc;
         std::thread th;
     };
-    std::map<std::string, std::unique_ptr<Runner>> processors_;  // 保持设备顺序（map 按 id 排序，与 python dict 顺序可能不同，仅影响 message 无关字段）
+    std::map<std::string, std::shared_ptr<Runner>> processors_;  // 保持设备顺序（map 按 id 排序，与 python dict 顺序可能不同，仅影响 message 无关字段）
 
     mutable std::mutex mu_;
+    std::atomic<bool> refreshing_{false};
+    std::atomic<bool> refresh_again_{false};
 };

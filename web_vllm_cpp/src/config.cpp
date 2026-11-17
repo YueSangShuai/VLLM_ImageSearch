@@ -117,6 +117,8 @@ Config Config::load() {
     c.rule_description_max_new_tokens = (int)getenv_int("VLM_RULE_DESCRIPTION_MAX_NEW_TOKENS", 60);
     c.rule_prompt_max_texts = (int)getenv_int("VLM_RULE_PROMPT_MAX_TEXTS", 3);
 
+    c.debug_capture = getenv_bool("VLM_DEBUG_CAPTURE", false);
+
     c.bge_onnx_path = getenv_str("EMBEDDING_ONNX_PATH", models_dir + "/onnx/bge-small-zh.onnx");
     c.bge_vocab_path = getenv_str("EMBEDDING_VOCAB_PATH",
         "/data/yuesang/LLM/FG-CLIP/models/bge-small-zh-v1.5/vocab.txt");

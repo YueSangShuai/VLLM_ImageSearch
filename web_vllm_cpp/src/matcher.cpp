@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <regex>
 #include <unordered_map>
 
@@ -232,6 +233,49 @@ std::string Matcher::cleanVlmDescription(const std::string & text, size_t max_ch
     return trim_chars(clipped, " ，。；;");
 }
 
+// 按多字节分隔符切分（"。"/"，" 均为 3 字节 UTF-8）
+static std::vector<std::string> split_utf8(const std::string & s, const char * delim) {
+    std::vector<std::string> out;
+    size_t start = 0, dlen = strlen(delim);
+    for (;;) {
+        size_t p = s.find(delim, start);
+        out.push_back(s.substr(start, p == std::string::npos ? std::string::npos : p - start));
+        if (p == std::string::npos) break;
+        start = p + dlen;
+    }
+    return out;
+}
+
+// 微调模型惯于输出「由于视角的原因无法判断性别」「整体画面较为模糊」
+// 「整体场景给人一种…的氛围」等 hedge/环境句，prompt 压不住。这些分句进 BGE
+// 向量会稀释衣着相似度，按分句剔除。
+static bool isNoiseClause(const std::string & s) {
+    static const char * bad[] = {
+        "无法", "难以", "看不清", "看不出", "看不清楚", "视角",
+        "模糊", "氛围", "感觉", "图像显示", "画面显示", "画质", "分辨率",
+    };
+    for (const char * b : bad)
+        if (s.find(b) != std::string::npos) return true;
+    return false;
+}
+
+// 分句匹配：描述按「。」→「，」切成短句，噪声分句剔除，每个分句独立编码；
+// 规则文本（query）取各分句 cos 的最大值。注意：rknn 线上 2026-11-04 已改回
+// 「规则短句(分句) vs 描述整句」单向量口径，本函数与 web_vllm_rknn 同步保留备用
+// （勿删，历史口径参考；启用需重新标定规则阈值，分数分布整体上移 0.07~0.11）。
+[[maybe_unused]] static std::vector<std::string> buildEmbeddingClauses(const std::string & description) {
+    std::vector<std::string> out;
+    for (const auto & seg : split_utf8(description, "。")) {
+        for (const auto & clause : split_utf8(seg, "，")) {
+            std::string c = trim_chars(clause, " ，。");
+            if (c.empty() || isNoiseClause(c)) continue;
+            out.push_back(std::move(c));
+        }
+    }
+    if (out.empty()) out.push_back(description);
+    return out;
+}
+
 bool Matcher::isNoMatchDescription(const std::string & text) {
     // _is_no_match_description
     static const char * markers[] = {
@@ -305,19 +349,22 @@ std::vector<std::string> Matcher::extractStructuredAttributes(const ImageRGB & i
     return attributes;
 }
 
-std::string Matcher::describeImage(const ImageRGB & img) {
-    // describe_image
-    last_desc_zh_.clear();
+Matcher::DescResult Matcher::describeImage(const ImageRGB & img, const std::string & prompt) {
+    // describe_image：结果走局部返回而非共享成员——调用方（match）不持 mu_ 也能安全生成
+    DescResult r;
     if (mode_ == "structured") {
-        return join(extractStructuredAttributes(img), ",");
+        r.attrs = extractStructuredAttributes(img);
+        r.text = join(r.attrs, ",");
+        return r;
     }
     if (mode_ == "combined") {
-        last_attrs_ = extractStructuredAttributes(img);   // 先属性（符号匹配+展示），再描述（语义匹配）
+        r.attrs = extractStructuredAttributes(img);   // 先属性（符号匹配+展示），再描述（语义匹配）
     }
-    std::string description = vlm_->describe(img, description_prompt_, vlm_max_, temp_, rep_);
+    std::string description = vlm_->describe(img, prompt, vlm_max_, temp_, rep_);
     auto [en, zh] = splitBilingual(description);
-    last_desc_zh_ = zh.empty() ? "" : collapseWs(zh);
-    return cleanVlmDescription(en, 1200);
+    r.zh = zh.empty() ? "" : collapseWs(zh);
+    r.text = cleanVlmDescription(en, 1200);
+    return r;
 }
 
 std::string Matcher::buildRuleDescriptionPrompt(const json & rule,
@@ -431,84 +478,186 @@ static bool ruleBool(const json & r, const char * key, bool def) {
 }
 
 void Matcher::updateRules(const json & rules) {
-    std::lock_guard<std::mutex> lk(mu_);
-    // update_rules：只保留 enabled 规则；预计算正/负向量与属性解析
-    rules_.clear();
+    // update_rules：只保留 enabled 规则；预计算正/负向量与属性解析。
+    // 卡顿治理两条（同 web_vllm_rknn）：
+    //   ① vec_cache_ 文本→向量缓存：只有新文本才进 BGE（调阈值/改名/开关 = 零编码，微秒级）；
+    //   ② 编码在 mu_ 锁外进行——match() 的 VLM 描述可达数秒，旧版整表重编码挤在锁内，
+    //      HTTP 保存规则要等“当前帧描述完 + 全部编码”=整站等。
+    struct RuleTexts {
+        std::string id;
+        std::vector<std::string> pos, neg;
+    };
+    std::vector<json> new_rules;
+    std::vector<RuleTexts> rts;
+    std::set<std::string> want;
     if (rules.is_array()) {
-        for (const auto & r : rules) {
-            if (r.is_object() && ruleBool(r, "enabled", true)) rules_.push_back(r);
+        for (const auto & rule : rules) {
+            if (!(rule.is_object() && ruleBool(rule, "enabled", true))) continue;
+            RuleTexts rt;
+            rt.id = getStr(rule, "id");
+            // positive 为空时回退 [text]（python: rule.get('positive') or [rule.get('text','')]）
+            json pos_json = rule.contains("positive") ? rule["positive"] : json();
+            rt.pos = normalizeTexts(pos_json);
+            if (rt.pos.empty()) rt.pos = normalizeTexts(json::array({getStr(rule, "text")}));
+            rt.neg = normalizeTexts(rule.contains("negative") ? rule["negative"] : json());
+            for (const auto & t : rt.pos) want.insert(t);
+            for (const auto & t : rt.neg) want.insert(t);
+            new_rules.push_back(rule);
+            rts.push_back(std::move(rt));
         }
     }
-    rule_emb_.clear(); neg_emb_.clear();
-    pos_texts_.clear(); neg_texts_.clear();
-    attr_pos_.clear(); attr_neg_.clear();
 
-    for (const auto & rule : rules_) {
-        std::string id = getStr(rule, "id");
-        // positive 为空时回退 [text]（python: rule.get('positive') or [rule.get('text','')]）
-        json pos_json = rule.contains("positive") ? rule["positive"] : json();
-        std::vector<std::string> positives = normalizeTexts(pos_json);
-        if (positives.empty()) positives = normalizeTexts(json::array({getStr(rule, "text")}));
-        std::vector<std::string> negatives =
-            normalizeTexts(rule.contains("negative") ? rule["negative"] : json::array());
+    // 锁内比对缓存，只收集缺失文本（直判模式无需向量）
+    std::vector<std::string> todo;
+    if (mode_ != "rule_direct") {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto & t : want)
+            if (!vec_cache_.count(t)) todo.push_back(t);
+    }
 
-        pos_texts_[id] = positives;
-        neg_texts_[id] = negatives;
-        if (mode_ == "rule_direct") continue;   // 直判模式无需向量
+    // 锁外编码缺失文本（TextEmbedder::encode 自带锁，与在跑的描述/打分互不干涉）
+    if (!todo.empty()) {
+        std::vector<float> vecs = emb_->encode(todo);
+        size_t dim = vecs.empty() ? 0 : vecs.size() / todo.size();
+        std::lock_guard<std::mutex> lk(mu_);
+        if (dim) {
+            for (size_t i = 0; i < todo.size() && (i + 1) * dim <= vecs.size(); i++)
+                vec_cache_[todo[i]] = std::vector<float>(vecs.begin() + i * dim,
+                                                         vecs.begin() + (i + 1) * dim);
+        }
+    }
 
-        auto embed = [&](const std::vector<std::string> & texts) {
+    // 锁内只做查表拼装换表（微秒级）
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        rules_ = std::move(new_rules);
+        rule_emb_.clear(); neg_emb_.clear();
+        pos_texts_.clear(); neg_texts_.clear();
+        attr_pos_.clear(); attr_neg_.clear();
+
+        for (const auto & rt : rts) {
+            const std::string & id = rt.id;
+            pos_texts_[id] = rt.pos;
+            neg_texts_[id] = rt.neg;
+            if (mode_ == "rule_direct") continue;   // 直判模式无需向量
+
             EmbMat m;
-            if (!texts.empty()) {
-                m.v = emb_->encode(texts);
-                m.n = texts.size();
+            for (const auto & t : rt.pos) {
+                auto it = vec_cache_.find(t);
+                if (it == vec_cache_.end()) continue;
+                m.v.insert(m.v.end(), it->second.begin(), it->second.end());
+                m.n++;
             }
-            return m;
-        };
-        rule_emb_[id] = embed(positives);
-        neg_emb_[id] = embed(negatives);
+            rule_emb_[id] = std::move(m);
 
-        if (mode_ == "structured" || mode_ == "combined") {
-            std::optional<std::set<std::string>> merged = std::set<std::string>();
-            bool ok = !positives.empty();
-            for (const auto & t : positives) {
-                auto parsed = parseRuleAttributes(t);
-                if (!parsed) { ok = false; break; }
-                merged->insert(parsed->begin(), parsed->end());
+            // 负样本：与正样本同口径，打分时 pos 须 > max(neg)+score_diff 才告警
+            EmbMat nm;
+            for (const auto & t : rt.neg) {
+                auto it = vec_cache_.find(t);
+                if (it == vec_cache_.end()) continue;
+                nm.v.insert(nm.v.end(), it->second.begin(), it->second.end());
+                nm.n++;
             }
-            attr_pos_[id] = ok ? merged : std::optional<std::set<std::string>>{};
+            neg_emb_[id] = std::move(nm);
 
-            std::set<std::string> neg_attrs;
-            for (const auto & t : negatives) {
-                auto parsed = parseRuleAttributes(t);
-                if (parsed) neg_attrs.insert(parsed->begin(), parsed->end());
+            if (mode_ == "structured" || mode_ == "combined") {
+                std::optional<std::set<std::string>> merged = std::set<std::string>();
+                bool ok = !rt.pos.empty();
+                for (const auto & t : rt.pos) {
+                    auto parsed = parseRuleAttributes(t);
+                    if (!parsed) { ok = false; break; }
+                    merged->insert(parsed->begin(), parsed->end());
+                }
+                attr_pos_[id] = ok ? merged : std::optional<std::set<std::string>>{};
+
+                std::set<std::string> neg_attrs;
+                for (const auto & t : rt.neg) {
+                    auto parsed = parseRuleAttributes(t);
+                    if (parsed) neg_attrs.insert(parsed->begin(), parsed->end());
+                }
+                attr_neg_[id] = neg_attrs;
             }
-            attr_neg_[id] = neg_attrs;
         }
-    }
 
-    description_prompt_ = (mode_ == "structured") ? structured_prompt_ : base_prompt_;
+        description_prompt_ = (mode_ == "structured") ? structured_prompt_ : base_prompt_;
+    }
+}
+
+// ---- 调试捕获 ----
+
+json Matcher::lastDebugSnapshot() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dbg_snapshot_;
+}
+
+json Matcher::describeForDebug(const ImageRGB & image) {
+    // VLM 生成（秒级）在 mu_ 锁外：旧版持锁跑完整描述，该设备的 updateRules
+    // 要排队等描述结束；refreshRules 又连锁调 updateRules，会拖住
+    // /api/monitoring/status、start/stop 等接口，表现为整站假死。
+    std::string prompt;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        prompt = description_prompt_;
+    }
+    DescResult dr = describeImage(image, prompt);
+    json snap;
+    snap["description"] = dr.text;
+    snap["description_zh"] = dr.zh;
+    json attrs = json::array();
+    for (const auto & a : dr.attrs) attrs.push_back(a);
+    snap["attributes"] = attrs;
+    return snap;
 }
 
 json Matcher::matchRuleDirect(const ImageRGB & img, double now) {
-    // match_rule_direct
+    // match_rule_direct：eligible+prompt 锁内组好，规则直判 VLM（秒级）挪到锁外，
+    // 解析/记冷却/写调试快照回到锁内——与 match() 同款锁纪律
     std::vector<json> eligible;
-    for (const auto & rule : rules_) {
-        std::string id = getStr(rule, "id");
-        double interval = ruleNumber(rule, "interval", 60);
-        auto it = last_trigger_.find(id);
-        if (it != last_trigger_.end() && now - it->second < interval) continue;
-        eligible.push_back(rule);
+    std::string prompt;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto & rule : rules_) {
+            std::string id = getStr(rule, "id");
+            double interval = ruleNumber(rule, "interval", 60);
+            auto it = last_trigger_.find(id);
+            if (it != last_trigger_.end() && now - it->second < interval) continue;
+            eligible.push_back(rule);
+        }
+        if (eligible.empty()) return json::array();
+        prompt = buildRuleJudgePrompt(eligible);
     }
-    json matches = json::array();
-    if (eligible.empty()) return matches;
 
-    std::string prompt = buildRuleJudgePrompt(eligible);
     std::string output = vlm_->describe(img, prompt, judge_max_, temp_, rep_);
+    json matches = json::array();
+    std::lock_guard<std::mutex> lk(mu_);
     std::string judge_output = collapseWs(output);
     auto matched = parseMatchedRuleNames(output, eligible);
     if (matched.empty()) {
         if (!judge_output.empty()) printf("规则直判未命中（模型输出: %s）\n", judge_output.c_str());
+        // 调试快照：直判模式没有描述，记录直判输出供 /debug 页查看
+        dbg_snapshot_["description"] = judge_output;
+        dbg_snapshot_["description_zh"] = "";
+        dbg_snapshot_["attributes"] = json::array();
         return matches;
+    }
+
+    // 逐规则明细：命中/未命中都进调试页
+    {
+        json dbg_rules = json::array();
+        for (const auto & rule : eligible) {
+            bool hit = false;
+            for (const auto & m : matched)
+                if (getStr(m, "id") == getStr(rule, "id")) { hit = true; break; }
+            json d;
+            d["rule_name"] = getStr(rule, "name");
+            d["type"] = "judge";
+            d["score"] = hit ? 1.0 : 0.0;
+            d["threshold"] = 0.5;
+            d["status"] = hit ? "hit" : "not_judged";
+            d["hit"] = hit;
+            dbg_rules.push_back(d);
+        }
+        dbg_snapshot_["rules"] = dbg_rules;
     }
 
     for (const auto & rule : matched) {
@@ -539,17 +688,47 @@ json Matcher::matchRuleDirect(const ImageRGB & img, double now) {
 }
 
 json Matcher::match(const ImageRGB & image) {
-    std::lock_guard<std::mutex> lk(mu_);
     // match：符号匹配（属性规则）+ BGE 向量匹配（自然语言规则）
     json empty = json::array();
-    if (rules_.empty()) return empty;
+    std::string prompt;
+    bool rules_empty, direct;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        dbg_snapshot_ = json::object();   // 调试快照按图作废，防止上一帧串图
+        rules_empty = rules_.empty();
+        direct = (mode_ == "rule_direct");
+        if (!direct && !rules_empty && rule_emb_.empty()) return empty;
+        prompt = description_prompt_;
+    }
+    if (rules_empty) {
+        // 调试捕获开启且无规则：仍生成一次描述供 /debug 展示（生成在 mu_ 锁外）
+        if (cfg_.debug_capture) {
+            json snap = describeForDebug(image);
+            std::lock_guard<std::mutex> lk(mu_);
+            dbg_snapshot_ = std::move(snap);
+        }
+        return empty;
+    }
 
     double now = std::chrono::duration<double>(
                      std::chrono::system_clock::now().time_since_epoch()).count();
-    if (mode_ == "rule_direct") return matchRuleDirect(image, now);
-    if (rule_emb_.empty()) return empty;
+    if (direct) return matchRuleDirect(image, now);
 
-    std::string description = describeImage(image);
+    // VLM 描述（秒级）不持 matcher mu_：刷新规则时的 updateRules 不必排队等描述
+    // （这正是「更新规则整个平台卡住」的根因）；多设备并发生成由 VlmDescriber 内部锁兜底
+    DescResult dr = describeImage(image, prompt);
+
+    // 调试快照：本帧描述/中文描述/属性（未命中规则的检测也能在 /debug 页看到）
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        dbg_snapshot_["description"] = dr.text;
+        dbg_snapshot_["description_zh"] = dr.zh;
+        json attrs = json::array();
+        for (const auto & a : dr.attrs) attrs.push_back(a);
+        dbg_snapshot_["attributes"] = attrs;
+    }
+
+    std::string description = dr.text;
     if (description.empty()) {
         printf("VLM描述为空，跳过本次匹配\n");
         return empty;
@@ -559,27 +738,46 @@ json Matcher::match(const ImageRGB & image) {
     if (mode_ == "structured") {
         for (const auto & a : split_any(description, ",")) if (!a.empty()) detected.insert(a);
     } else if (mode_ == "combined") {
-        detected.insert(last_attrs_.begin(), last_attrs_.end());
+        detected.insert(dr.attrs.begin(), dr.attrs.end());
     }
 
     // 结构化/混合模式：全部规则都能符号匹配时跳过图像描述向量计算
     bool needs_embedding = true;
-    if (mode_ == "structured" || mode_ == "combined") {
-        needs_embedding = false;
-        for (const auto & rule : rules_) {
-            auto it = attr_pos_.find(getStr(rule, "id"));
-            if (it == attr_pos_.end() || !it->second.has_value()) { needs_embedding = true; break; }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (mode_ == "structured" || mode_ == "combined") {
+            needs_embedding = false;
+            for (const auto & rule : rules_) {
+                auto it = attr_pos_.find(getStr(rule, "id"));
+                if (it == attr_pos_.end() || !it->second.has_value()) { needs_embedding = true; break; }
+            }
         }
     }
     std::vector<float> image_emb;
-    if (needs_embedding) image_emb = emb_->encode_one(buildEmbeddingText(description));
+    if (needs_embedding)
+        image_emb = emb_->encode_one(buildEmbeddingText(description));   // 锁外，BGE 自带锁
 
     json matches = json::array();
+    // 调试捕获：逐规则得分明细（未命中/冷却中的规则也算分、也记录），match 末尾挂到快照
+    json dbg_rules = json::array();
+    // 规则二次核验的 VLM 生成也挪到锁外：先收集命中项，生成完再回填/回滚
+    struct DescJob { size_t match_idx; size_t dbg_idx; json rule;
+                     std::vector<std::string> pos, neg; };
+    std::vector<DescJob> desc_jobs;
+    {
+    std::lock_guard<std::mutex> lk(mu_);
     for (const auto & rule : rules_) {
         std::string id = getStr(rule, "id");
         double interval = ruleNumber(rule, "interval", 60);
         auto lt = last_trigger_.find(id);
-        if (lt != last_trigger_.end() && now - lt->second < interval) continue;
+        bool in_cooldown = lt != last_trigger_.end() && now - lt->second < interval;
+
+        // 调试明细：本规则的静态信息先填好，得分算完再补 score/status
+        json d;
+        d["rule_name"] = getStr(rule, "name");
+        d["threshold"] = round4(ruleNumber(rule, "threshold", 0.5));
+        d["score_diff"] = round4(ruleNumber(rule, "score_diff", 0));
+        d["hit"] = false;
 
         double best_positive_score = 0.0;
         double max_negative_score = 0.0;
@@ -588,14 +786,15 @@ json Matcher::match(const ImageRGB & image) {
 
         auto ap = attr_pos_.find(id);
         bool symbolic = ap != attr_pos_.end() && ap->second.has_value() && !ap->second->empty();
+        d["type"] = symbolic ? "symbolic" : "semantic";
         if (symbolic) {
             // 符号匹配：得分为正样本属性覆盖率；任一负样本属性命中记 1.0
             std::vector<std::string> pos_attrs(ap->second->begin(), ap->second->end());  // set 已有序
-            std::vector<std::string> present;
+            std::vector<std::string> present, missing;
             for (const auto & a : pos_attrs) {
                 bool has = detected.count(a) > 0;
                 positive_scores.push_back(has ? 1.0 : 0.0);
-                if (has) present.push_back(a);
+                (has ? present : missing).push_back(a);
             }
             best_positive_score = (double)present.size() / (double)pos_attrs.size();
             best_positive_text = present.empty() ? pos_attrs[0] : join(present, ",");
@@ -605,9 +804,16 @@ json Matcher::match(const ImageRGB & image) {
                     if (detected.count(a)) { max_negative_score = 1.0; break; }
                 }
             }
+            d["expected"] = pos_attrs;    // 规则要求的属性
+            d["hit_attrs"] = present;     // 本帧检出的
+            d["missing_attrs"] = missing; // 未命中的属性（调试页高亮）
         } else {
             auto pe = rule_emb_.find(id);
-            if (pe == rule_emb_.end() || pe->second.n == 0) continue;
+            if (pe == rule_emb_.end() || pe->second.n == 0) {
+                d["status"] = "no_embedding";   // 规则无正样本向量，不打分
+                dbg_rules.push_back(d);
+                continue;
+            }
             const EmbMat & pos = pe->second;
             size_t best_idx = 0;
             float best_raw = -1e30f;
@@ -640,16 +846,44 @@ json Matcher::match(const ImageRGB & image) {
 
         double score_diff = ruleNumber(rule, "score_diff", 0);
         double threshold = ruleNumber(rule, "threshold", 0.5);
-        if (!(best_positive_score >= threshold && best_positive_score > max_negative_score + score_diff))
-            continue;
+        bool passed = best_positive_score >= threshold &&
+                      best_positive_score > max_negative_score + score_diff;
+
+        // 调试明细入表：状态区分 命中/低于阈值/被负样本压制/低于score_diff/冷却中
+        d["score"] = round4(best_positive_score);
+        bool neg_blocked = !passed && best_positive_score >= threshold &&
+                           max_negative_score > 0 &&
+                           best_positive_score <= max_negative_score + score_diff;
+        if (in_cooldown) {
+            d["status"] = "cooldown";
+            d["would_hit"] = passed;
+        } else if (passed) {
+            d["status"] = "hit";
+            d["hit"] = true;
+        } else if (neg_blocked) {
+            d["status"] = "negative_higher";
+        } else {
+            d["status"] = best_positive_score < threshold ? "below_threshold" : "below_score_diff";
+        }
+        if (!symbolic) {
+            auto pt = pos_texts_.find(id);
+            if (pt != pos_texts_.end()) d["positive_list"] = pt->second;
+            d["positive_scores"] = positive_scores;
+        }
+        if (max_negative_score > 0 || !negative_scores.empty()) {
+            auto nt = neg_texts_.find(id);
+            if (nt != neg_texts_.end()) d["negative_list"] = nt->second;
+            d["negative_scores"] = negative_scores;
+            d["max_negative_score"] = round4(max_negative_score);
+        }
+        size_t dbg_idx = dbg_rules.size();
+        dbg_rules.push_back(d);
+        if (!passed || in_cooldown) continue;   // 冷却中只记分不触发
 
         last_trigger_[id] = now;
         std::vector<std::string> pos = pos_texts_.count(id) ? pos_texts_[id] : std::vector<std::string>{};
         std::vector<std::string> neg = neg_texts_.count(id) ? neg_texts_[id] : std::vector<std::string>{};
         bool negative_higher = (max_negative_score >= threshold && max_negative_score >= best_positive_score);
-
-        std::string rule_description = describeRuleMatch(rule, pos, neg, description, image);
-        if (rule_desc_enabled_ && rule_desc_verify_ && rule_description.empty()) continue;
 
         json m;
         m["rule_id"] = id;
@@ -661,21 +895,49 @@ json Matcher::match(const ImageRGB & image) {
         m["negative_scores"] = negative_scores;
         m["final_score"] = round4(best_positive_score);
         m["negative_higher"] = negative_higher;
-        m["description"] = rule_description;
+        m["description"] = description;         // 二次核验命中的条目稍后锁外生成规则描述回填
         m["base_description"] = description;
-        m["description_zh"] = last_desc_zh_;
+        m["description_zh"] = dr.zh;
         if (!detected.empty()) {
             if (mode_ == "structured") {
                 json arr = json::array();   // description.split(",")
                 for (const auto & a : split_any(description, ",")) if (!a.empty()) arr.push_back(a);
                 m["attributes"] = arr;
             } else {
-                m["attributes"] = last_attrs_;
+                m["attributes"] = dr.attrs;
             }
         } else {
             m["attributes"] = json::array();
         }
+        size_t match_idx = matches.size();
         matches.push_back(m);
+        if (rule_desc_enabled_) desc_jobs.push_back({match_idx, dbg_idx, rule, pos, neg});
+    }
+    dbg_snapshot_["rules"] = dbg_rules;   // 逐规则得分明细（含未命中），随快照进 /debug
+    }
+
+    // 规则二次核验的 VLM 生成（秒级）不持 mu_：批量生成规则描述期间 updateRules、
+    // 监控接口不必排队。核验不通过的条目从 matches 摘除（与旧行为一致：冷却已记不回收）
+    if (!desc_jobs.empty()) {
+        std::vector<std::string> descs;
+        descs.reserve(desc_jobs.size());
+        for (auto & job : desc_jobs)
+            descs.push_back(describeRuleMatch(job.rule, job.pos, job.neg, description, image));
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<size_t> drop;
+        for (size_t i = 0; i < desc_jobs.size(); i++) {
+            if (rule_desc_verify_ && descs[i].empty()) {
+                drop.push_back(desc_jobs[i].match_idx);
+                if (desc_jobs[i].dbg_idx < dbg_rules.size())
+                    dbg_rules[desc_jobs[i].dbg_idx]["status"] = "desc_rejected";
+                continue;
+            }
+            matches[desc_jobs[i].match_idx]["description"] = descs[i];
+        }
+        dbg_snapshot_["rules"] = dbg_rules;   // 回填 desc_rejected 标记
+        std::sort(drop.begin(), drop.end());
+        for (auto it = drop.rbegin(); it != drop.rend(); ++it)
+            matches.erase(matches.begin() + *it);
     }
     return matches;
 }

@@ -47,6 +47,10 @@ struct Config {
     std::string bge_vocab_path;
     int bge_max_length = 512;
 
+    // 调试捕获：VLM_DEBUG_CAPTURE=1 时所有检出的行人（无论是否命中规则）
+    // 都存图 + 描述进 data/debug_log.json，web /debug 页查看。默认关闭。
+    bool debug_capture = false;
+
     // 检测
     std::string yolo_onnx_path;
     int detector_input = 640;

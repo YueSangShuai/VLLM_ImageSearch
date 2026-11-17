@@ -25,6 +25,14 @@ public:
     // 对应 match()：返回 matches json 数组（字段名与 Python 逐一对应）
     json match(const ImageRGB & image);
 
+    // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
+    // match() 期间生成的描述快照：{description, description_zh, attributes,
+    // rules(逐规则得分明细：name/type/score/threshold/status/hit，symbolic 附带
+    // expected/hit_attrs/missing_attrs，semantic 附带 positive_list/positive_scores)}
+    json lastDebugSnapshot();
+    // 未走 match 描述路径（无规则等）时补一次描述生成，供调试页展示
+    json describeForDebug(const ImageRGB & image);
+
 private:
     struct EmbMat {                      // python 的 (N, dim) ndarray
         std::vector<float> v;            // 行优先 N*dim
@@ -44,8 +52,13 @@ private:
     std::string extractVerifiedRuleDescription(const std::string & text) const;
 
     // ---- 业务流程 ----
+    struct DescResult {                  // 一次描述生成的输出；不再走 last_* 成员，
+        std::string text;                // 使描述阶段可以完全脱离 mu_ 跑
+        std::string zh;
+        std::vector<std::string> attrs;
+    };
     std::vector<std::string> extractStructuredAttributes(const ImageRGB & img);
-    std::string describeImage(const ImageRGB & img);
+    DescResult describeImage(const ImageRGB & img, const std::string & prompt);
     std::string describeRuleMatch(const json & rule, const std::vector<std::string> & pos,
                                   const std::vector<std::string> & neg,
                                   const std::string & fallback, const ImageRGB & img);
@@ -72,9 +85,9 @@ private:
     std::map<std::string, std::optional<std::set<std::string>>> attr_pos_;  // nullopt=需语义匹配
     std::map<std::string, std::set<std::string>> attr_neg_;
     std::map<std::string, double> last_trigger_;
+    std::map<std::string, std::vector<float>> vec_cache_;   // 规则文本→向量缓存：updateRules 只编码新文本
 
-    std::string last_desc_zh_;                 // last_description_zh
-    std::vector<std::string> last_attrs_;      // last_attributes
+    json dbg_snapshot_ = json::object();   // 调试捕获快照（match 每次调用先清空）
 
     std::mutex mu_;   // updateRules(HTTP线程) 与 match(设备线程) 互斥
 };

@@ -37,6 +37,181 @@ def get_alerts_file():
 
 os.makedirs(ALERTS_DIR, exist_ok=True)
 
+# 调试捕获（VLM_DEBUG_CAPTURE=1）：所有检出的行人（无论是否命中规则）落
+# ROI/原图 + 描述快照进 data/debug_log.json，web /debug 页展示
+DEBUG_DIR = os.path.join(DATA_DIR, 'debug_images')
+DEBUG_LOG_FILE = os.path.join(DATA_DIR, 'debug_log.json')
+DEBUG_CAPTURE = os.environ.get('VLM_DEBUG_CAPTURE', '').lower() not in ('', '0', 'false', 'no')
+
+def append_debug_log(entry: Dict):
+    """调试捕获日志：头插、截断 1000；被逐出的旧条目连同其 ROI/原图一起删除（防磁盘堆积）"""
+    with _log_lock:
+        logs = []
+        if os.path.exists(DEBUG_LOG_FILE):
+            try:
+                with open(DEBUG_LOG_FILE, 'r', encoding='utf-8') as f:
+                    logs = json.load(f)
+                if not isinstance(logs, list):
+                    logs = []
+            except (json.JSONDecodeError, Exception):
+                logs = []
+        logs.insert(0, entry)
+        while len(logs) > 1000:
+            old = logs.pop()
+            for key in ('image', 'original_image'):
+                rel = old.get(key)
+                if isinstance(rel, str) and rel and '..' not in rel and not rel.startswith('/'):
+                    try:
+                        os.remove(os.path.join(DEBUG_DIR, rel))
+                    except OSError:
+                        pass
+        with open(DEBUG_LOG_FILE + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(logs, f, ensure_ascii=False, indent=2)
+        os.replace(DEBUG_LOG_FILE + '.tmp', DEBUG_LOG_FILE)
+
+
+# ==================== 按设备过滤配置解析（devices.json 设备项，缺字段=不过滤） ====================
+
+def parse_roi_regions(device: Dict) -> List[Dict]:
+    """roi_regions: [{"x":0.1,"y":0.2,"w":0.5,"h":0.6}, ...]（归一化 0..1）；
+    空/缺 = 全图。非法项跳过。"""
+    out = []
+    for r in device.get('roi_regions') or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            x, y, w, h = (float(r['x']), float(r['y']), float(r['w']), float(r['h']))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        out.append({'x': x, 'y': y, 'w': w, 'h': h})
+    return out
+
+
+# 单设备上限：区域是每帧解析的，防手改 json 塞进几千个顶点把设备线程拖慢
+MAX_POLYS_PER_DEVICE = 16
+MAX_POLY_VERTICES = 64
+
+def parse_roi_polys(device: Dict) -> List[List[tuple]]:
+    """roi_polygons: [[{"x":..,"y":..}, ...], ...]（归一化 0..1，首尾隐式闭合）；
+    空/缺 = 全图。非法多边形整块丢弃。"""
+    out = []
+
+    def clamp01(v):
+        return 0.0 if v < 0 else (1.0 if v > 1.0 else v)
+
+    for raw in device.get('roi_polygons') or []:
+        if len(out) >= MAX_POLYS_PER_DEVICE:
+            break
+        if not isinstance(raw, list):
+            continue
+        pts = []
+        for pt in raw:
+            if len(pts) >= MAX_POLY_VERTICES:
+                break
+            if not isinstance(pt, dict) or 'x' not in pt or 'y' not in pt:
+                continue
+            try:
+                x, y = clamp01(float(pt['x'])), clamp01(float(pt['y']))
+            except (TypeError, ValueError):
+                continue
+            # 相邻重复点会让射线法的 (y_i>py)!=(y_j>py) 判定退化，直接丢
+            if pts and pts[-1] == (x, y):
+                continue
+            pts.append((x, y))
+        if len(pts) > 1 and pts[0] == pts[-1]:
+            pts.pop()  # 显式闭合的首尾同点：隐式闭合已覆盖
+        if len(pts) < 3:
+            continue
+        # 鞋带公式：共线/面积极小的退化多边形没有判定意义
+        area2 = 0.0
+        n = len(pts)
+        for i in range(n):
+            x0, y0 = pts[i]
+            x1, y1 = pts[i - 1]
+            area2 += x1 * y0 - x0 * y1
+        if abs(area2) < 1e-6:
+            continue
+        out.append(pts)
+    return out
+
+
+def point_in_polygon(px: float, py: float, pts) -> bool:
+    """even-odd 射线法。在归一化空间判定成立：查询点与各轴按同样方式缩放，包含关系不变。"""
+    inside = False
+    n = len(pts)
+    for i in range(n):
+        xi, yi = pts[i]
+        xj, yj = pts[i - 1]
+        if (yi > py) != (yj > py):
+            xint = xi + (py - yi) / (yj - yi) * (xj - xi)
+            if px < xint:
+                inside = not inside
+    return inside
+
+
+def inside_roi(bbox, rects, polys, frame_w, frame_h) -> bool:
+    """矩形判框中心（沿用历史口径），多边形判脚点（bbox 底边中点，圈的是地面范围，
+    用框中心会在人贴边界时把站在外面的人算进来）。命中任一形状即保留。"""
+    cx = (bbox[0] + bbox[2]) / 2.0 / frame_w
+    cy = (bbox[1] + bbox[3]) / 2.0 / frame_h
+    for r in rects:
+        if r['x'] <= cx <= r['x'] + r['w'] and r['y'] <= cy <= r['y'] + r['h']:
+            return True
+    fx = cx
+    fy = bbox[3] / float(frame_h)
+    for p in polys:
+        if point_in_polygon(fx, fy, p):
+            return True
+    return False
+
+
+def parse_orientation_filter(device: Dict) -> set:
+    """orientation_filter: ["Front","Side","Back"] 子集；空/缺 = 不限"""
+    return {a for a in (device.get('orientation_filter') or []) if a in ('Front', 'Side', 'Back')}
+
+
+def parse_min_box(device: Dict):
+    """min_box_w/min_box_h：低质量判定的宽高阈值，缺省 64/32（与历史硬编码一致）"""
+    try:
+        w = int(device.get('min_box_w', 64))
+    except (TypeError, ValueError):
+        w = 64
+    try:
+        h = int(device.get('min_box_h', 32))
+    except (TypeError, ValueError):
+        h = 32
+    return w, h
+
+
+def orientation_allowed(match: Dict, allowed: set) -> bool:
+    """朝向事后过滤：attributes 里的 Front/Side/Back 没有任何一个落在 allowed 时判为不符。
+    attributes 里完全没有朝向属性（没判出来）→ 保留，不误杀。"""
+    has_orient = False
+    for a in match.get('attributes') or []:
+        if a in ('Front', 'Side', 'Back'):
+            has_orient = True
+            if a in allowed:
+                return True
+    return not has_orient
+
+
+def draw_roi_overlay(img, rects, polys):
+    """证据图上叠画区域边界（青色 BGR (255,200,0)），与绿色人框区分：
+    拉图回来能直接判断人当时在不在区域内"""
+    h, w = img.shape[:2]
+    for r in rects:
+        pts = np.array([[int(r['x'] * w), int(r['y'] * h)],
+                        [int((r['x'] + r['w']) * w), int(r['y'] * h)],
+                        [int((r['x'] + r['w']) * w), int((r['y'] + r['h']) * h)],
+                        [int(r['x'] * w), int((r['y'] + r['h']) * h)]], np.int32)
+        cv2.polylines(img, [pts], True, (255, 200, 0), 2)
+    for p in polys:
+        pts = np.array([[int(x * w), int(y * h)] for x, y in p], np.int32)
+        cv2.polylines(img, [pts], True, (255, 200, 0), 2)
+
+
 # 任务文件路径
 TASKS_FILE = os.path.join(DATA_DIR, 'tasks.json')
 
@@ -433,6 +608,31 @@ class VLMTextMatcher:
                 return clipped[:pos].strip(" ，。；;")
         return clipped.strip(" ，。；;")
 
+    # 微调模型惯于输出「由于视角的原因无法判断性别」「整体画面较为模糊」
+    # 「整体场景给人一种…的氛围」等 hedge/环境句，prompt 压不住。这些分句进 BGE
+    # 向量会稀释衣着相似度，按分句剔除。
+    _NOISE_MARKERS = ("无法", "难以", "看不清", "看不出", "看不清楚", "视角",
+                      "模糊", "氛围", "感觉", "图像显示", "画面显示", "画质", "分辨率")
+
+    @classmethod
+    def _is_noise_clause(cls, s: str) -> bool:
+        return any(b in s for b in cls._NOISE_MARKERS)
+
+    @classmethod
+    def _build_embedding_clauses(cls, description: str) -> List[str]:
+        """分句匹配：描述按「。」→「，」切成短句，噪声分句剔除，每个分句独立编码；
+        规则文本（query）取各分句 cos 的最大值。注意：rknn 线上 2026-11-04 已改回
+        「规则短句(分句) vs 描述整句」单向量口径，本函数与 web_vllm_rknn 同步保留备用
+        （勿删，历史口径参考；启用需重新标定规则阈值，分数分布整体上移 0.07~0.11）。"""
+        out = []
+        for seg in description.split("。"):
+            for clause in seg.split("，"):
+                c = clause.strip(" ，。")
+                if not c or cls._is_noise_clause(c):
+                    continue
+                out.append(c)
+        return out or [description]
+
     def _is_no_match_description(self, text: str) -> bool:
         normalized = "".join(str(text or "").split())
         no_match_markers = (
@@ -646,7 +846,21 @@ class VLMTextMatcher:
             return []
 
         judge_output = " ".join(str(output or "").split())
+        # 调试快照：直判模式没有描述，记录直判输出供 /debug 页查看
+        self.last_debug_snapshot = {
+            'description': judge_output,
+            'description_zh': '',
+            'attributes': [],
+        }
         matched = self._parse_matched_rule_names(output, eligible)
+        self.last_debug_snapshot['rules'] = [{
+            'rule_name': rule.get('name', ''),
+            'type': 'judge',
+            'score': 1.0 if any(r['id'] == rule['id'] for r in matched) else 0.0,
+            'threshold': 0.5,
+            'status': 'hit' if any(r['id'] == rule['id'] for r in matched) else 'not_judged',
+            'hit': any(r['id'] == rule['id'] for r in matched),
+        } for rule in eligible]
         if not matched:
             if judge_output:
                 print(f"规则直判未命中（模型输出: {judge_output}）")
@@ -675,17 +889,42 @@ class VLMTextMatcher:
             })
         return matches
 
+    def describe_for_debug(self, image: Image.Image) -> Dict:
+        """未走 match 描述路径（无规则等）时补一次描述生成，供调试页展示"""
+        try:
+            description = self.describe_image(image)
+        except Exception as e:
+            print(f"调试描述生成失败: {e}")
+            description = ""
+        return {
+            'description': description,
+            'description_zh': getattr(self, 'last_description_zh', ''),
+            'attributes': list(getattr(self, 'last_attributes', [])),
+        }
+
     def match(self, image: Image.Image) -> List[Dict]:
         """结构化模式对属性规则做符号匹配，其余用BGE比较VLM图像描述与规则文本的相似度；
         rule_direct模式把规则代入提示词由VLM直接判断"""
+        self.last_debug_snapshot = {}   # 调试快照按图作废，防止上一帧串图
         if not self.rules:
+            # 调试捕获开启且无规则：仍生成一次描述供 /debug 展示
+            if DEBUG_CAPTURE:
+                self.last_debug_snapshot = self.describe_for_debug(image)
             return []
         if self.match_mode == "rule_direct":
             return self.match_rule_direct(image)
         if not self.rule_embeddings:
+            if DEBUG_CAPTURE:
+                self.last_debug_snapshot = self.describe_for_debug(image)
             return []
 
         description = self.describe_image(image)
+        # 调试快照：本帧描述/中文描述/属性（未命中规则的检测也能在 /debug 页看到）
+        self.last_debug_snapshot = {
+            'description': description,
+            'description_zh': getattr(self, 'last_description_zh', ''),
+            'attributes': list(getattr(self, 'last_attributes', [])),
+        }
         if not description:
             print("VLM描述为空，跳过本次匹配")
             return []
@@ -709,20 +948,31 @@ class VLMTextMatcher:
         )
         current_time = time.time()
         matches = []
+        # 调试捕获：逐规则得分明细（未命中/冷却中的规则也算分、也记录），随快照进 /debug
+        dbg_rules = []
 
         for rule in self.rules:
             rule_id = rule['id']
 
             interval = rule.get('interval', 60)
-            if rule_id in self.last_trigger_time:
-                if current_time - self.last_trigger_time[rule_id] < interval:
-                    continue
+            in_cooldown = (rule_id in self.last_trigger_time and
+                           current_time - self.last_trigger_time[rule_id] < interval)
+
+            # 调试明细：本规则的静态信息先填好，得分算完再补 score/status
+            d = {
+                'rule_name': rule.get('name', ''),
+                'threshold': round(float(rule.get('threshold', 0.5) or 0.5), 4),
+                'score_diff': round(float(rule.get('score_diff', 0) or 0), 4),
+                'hit': False,
+            }
 
             symbolic_positive = self.rule_attribute_positives.get(rule_id)
+            d['type'] = 'symbolic' if symbolic_positive else 'semantic'
             if symbolic_positive:
                 # 符号匹配：得分为正样本属性覆盖率；任一负样本属性命中记为1.0
                 pos_attrs = sorted(symbolic_positive)
                 present = [a for a in pos_attrs if a in detected_attributes]
+                missing = [a for a in pos_attrs if a not in detected_attributes]
                 positive_scores = [1.0 if a in detected_attributes else 0.0 for a in pos_attrs]
                 best_positive_score = len(present) / len(pos_attrs)
                 best_positive_text = ",".join(present) if present else pos_attrs[0]
@@ -731,9 +981,14 @@ class VLMTextMatcher:
                     1.0 if self.rule_attribute_negatives.get(rule_id, set()) & detected_attributes
                     else 0.0
                 )
+                d['expected'] = pos_attrs        # 规则要求的属性
+                d['hit_attrs'] = present          # 本帧检出的
+                d['missing_attrs'] = missing      # 未命中的属性（调试页高亮）
             else:
                 positive_embeddings = self.rule_embeddings.get(rule_id)
                 if positive_embeddings is None or len(positive_embeddings) == 0:
+                    d['status'] = 'no_embedding'   # 规则无正样本向量，不打分
+                    dbg_rules.append(d)
                     continue
 
                 positive_scores_raw = positive_embeddings @ image_embedding
@@ -753,42 +1008,71 @@ class VLMTextMatcher:
 
             score_diff = rule.get('score_diff', 0)
             threshold = float(rule.get('threshold', 0.5))
-            if best_positive_score >= threshold and best_positive_score > max_negative_score + score_diff:
-                self.last_trigger_time[rule_id] = current_time
+            passed = (best_positive_score >= threshold and
+                      best_positive_score > max_negative_score + score_diff)
 
-                positive_list = self.rule_positive_texts.get(rule_id, [])
-                negative_list = self.rule_negative_texts.get(rule_id, [])
-                negative_higher = (max_negative_score >= threshold and max_negative_score >= best_positive_score)
-                rule_description = self.describe_rule_match(
-                    image,
-                    rule,
-                    positive_list,
-                    negative_list,
-                    description
-                )
-                if self.rule_description_enabled and self.rule_description_verify and not rule_description:
-                    continue
+            # 调试明细入表：状态区分 命中/低于阈值/被负样本压制/低于score_diff/冷却中
+            d['score'] = round(best_positive_score, 4)
+            neg_blocked = (not passed and best_positive_score >= threshold and
+                           max_negative_score > 0 and
+                           best_positive_score <= max_negative_score + score_diff)
+            if in_cooldown:
+                d['status'] = 'cooldown'
+                d['would_hit'] = passed
+            elif passed:
+                d['status'] = 'hit'
+                d['hit'] = True
+            elif neg_blocked:
+                d['status'] = 'negative_higher'
+            else:
+                d['status'] = 'below_threshold' if best_positive_score < threshold else 'below_score_diff'
+            if not symbolic_positive:
+                d['positive_list'] = self.rule_positive_texts.get(rule_id, [])
+                d['positive_scores'] = positive_scores
+            if max_negative_score > 0 or negative_scores:
+                d['negative_list'] = self.rule_negative_texts.get(rule_id, [])
+                d['negative_scores'] = negative_scores
+                d['max_negative_score'] = round(max_negative_score, 4)
+            dbg_rules.append(d)
+            if not passed or in_cooldown:
+                continue   # 冷却中只记分不触发
 
-                matches.append({
-                    'rule_id': rule_id,
-                    'rule_name': rule['name'],
-                    'positive': best_positive_text,
-                    'positive_list': positive_list,
-                    'negative_list': negative_list,
-                    'positive_scores': positive_scores,
-                    'negative_scores': negative_scores,
-                    'final_score': round(best_positive_score, 4),
-                    'negative_higher': negative_higher,
-                    'description': rule_description,
-                    'base_description': description,
-                    'description_zh': getattr(self, 'last_description_zh', ''),
-                    'attributes': (
-                        description.split(",")
-                        if self.match_mode == "structured"
-                        else list(getattr(self, 'last_attributes', []))
-                    ) if detected_attributes else []
-                })
+            self.last_trigger_time[rule_id] = current_time
 
+            positive_list = self.rule_positive_texts.get(rule_id, [])
+            negative_list = self.rule_negative_texts.get(rule_id, [])
+            negative_higher = (max_negative_score >= threshold and max_negative_score >= best_positive_score)
+            rule_description = self.describe_rule_match(
+                image,
+                rule,
+                positive_list,
+                negative_list,
+                description
+            )
+            if self.rule_description_enabled and self.rule_description_verify and not rule_description:
+                continue
+
+            matches.append({
+                'rule_id': rule_id,
+                'rule_name': rule['name'],
+                'positive': best_positive_text,
+                'positive_list': positive_list,
+                'negative_list': negative_list,
+                'positive_scores': positive_scores,
+                'negative_scores': negative_scores,
+                'final_score': round(best_positive_score, 4),
+                'negative_higher': negative_higher,
+                'description': rule_description,
+                'base_description': description,
+                'description_zh': getattr(self, 'last_description_zh', ''),
+                'attributes': (
+                    description.split(",")
+                    if self.match_mode == "structured"
+                    else list(getattr(self, 'last_attributes', []))
+                ) if detected_attributes else []
+            })
+
+        self.last_debug_snapshot['rules'] = dbg_rules   # 逐规则得分明细，随快照进 /debug
         return matches
 
 
@@ -796,20 +1080,43 @@ class StreamProcessor:
     """流处理器"""
 
     def __init__(self, device: Dict, detector: PersonDetector, matcher: VLMTextMatcher):
-        self.device_info = device
+        self._dev_lock = threading.Lock()
+        self.device_info = dict(device)
         self.detector = detector
         self.matcher = matcher
         self.running = False
         self.cap = None
+        self.debug_capture = DEBUG_CAPTURE
 
         # 告警回调
         self.on_alert = None
 
+    # 运行时热更新设备配置（ROI 矩形 roi_regions / 不规则区域 roi_polygons / 朝向过滤 /
+    # 低质量阈值存于 devices.json 设备项，缺字段 = 全图 / 不限 / 64x32）。
+    # HTTP/刷新线程写，设备线程按帧读，_dev_lock 互斥。
+    def update_device(self, device: Dict):
+        with self._dev_lock:
+            self.device_info = dict(device)
+
+    def _device_snapshot(self) -> Dict:
+        with self._dev_lock:
+            return dict(self.device_info)
+
+    @property
+    def device_info(self):
+        with self._dev_lock:
+            return self._device
+
+    @device_info.setter
+    def device_info(self, value):
+        self._device = value
+
     def start(self):
         """启动处理 - 每个流独立运行，有错误隔离"""
+        device = self._device_snapshot()
         device_manager = DeviceManager()
-        rtsp_url = device_manager.get_rtsp_url(self.device_info)
-        device_name = self.device_info.get('name', 'Unknown')
+        rtsp_url = device_manager.get_rtsp_url(device)
+        device_name = device.get('name', 'Unknown')
 
         print(f"[{device_name}] 开始连接流: {rtsp_url}")
         self.running = True
@@ -863,11 +1170,44 @@ class StreamProcessor:
     def _process_frame(self, frame):
         """处理单帧 - 独立的错误隔离"""
         try:
+            device = self._device_snapshot()
             detections = self.detector.detect(frame)
+            frame_h, frame_w = frame.shape[:2]
 
             if detections:
-                device_name = self.device_info.get('name', 'Unknown')
+                device_name = device.get('name', 'Unknown')
                 print(f"[{device_name}] 检测到 {len(detections)} 个行人")
+
+            # 检测区域过滤：roi_regions（矩形，判框中心）/ roi_polygons（不规则，判脚点）
+            # 任一非空时，只保留落在其中的检出（省下 VLM 描述+匹配的大头）
+            rects = parse_roi_regions(device)
+            polys = parse_roi_polys(device)
+            if (rects or polys) and detections:
+                kept, outside = [], []
+                for det in detections:
+                    (kept if inside_roi(det['bbox'], rects, polys, frame_w, frame_h)
+                     else outside).append(det)
+                if len(kept) != len(detections):
+                    print(f"[{device.get('name', 'Unknown')}] ROI 区域过滤: "
+                          f"保留 {len(kept)}/{len(detections)} 个行人")
+                detections = kept
+
+                # 区域外行人也进调试页（排障：看区域圈得对不对、有没有误圈），但只落图，
+                # 不走 VLM 描述与规则匹配——这正是 ROI 过滤想省的大头
+                if self.debug_capture and outside:
+                    min_w, min_h = parse_min_box(device)
+                    for det in outside:
+                        try:
+                            bx1, by1, bx2, by2 = det['bbox']
+                            crop = frame[by1:by2, bx1:bx2]
+                            if crop.size == 0:
+                                continue
+                            self._capture_debug(
+                                crop, frame, det['bbox'],
+                                crop.shape[1] < min_w or crop.shape[0] < min_h,
+                                [], in_region=False)
+                        except Exception as e:
+                            print(f"区域外调试捕获异常: {e}")
 
             for det in detections:  # 处理所有检测到的目标
                 try:
@@ -877,8 +1217,99 @@ class StreamProcessor:
         except Exception as e:
             print(f"帧处理异常: {e}")
 
+    # VLM_DEBUG_CAPTURE=1：所有检测到的行人（无论是否命中规则）落盘 ROI/原图 + 描述快照，
+    # 写入 data/debug_log.json，web /debug 页展示。图片按 日期/设备/roi|original 分目录，
+    # 截断 1000 条时会顺带删除被逐出的图片。
+    # in_region=False（区域外行人）：只落图，不取/不补描述快照，条目打 outside_roi 标。
+    # orient_dropped：朝向事后过滤丢弃的规则名（match() 先跑、朝向过滤后行，快照里这些规则
+    # 仍是 hit，改标 orientation 让页面能写明「朝向不符合」）。
+    def _capture_debug(self, person_img, frame, bbox, low_quality, matches,
+                       in_region=True, orient_dropped=None):
+        device = self._device_snapshot()
+        rects = parse_roi_regions(device)
+        polys = parse_roi_polys(device)
+
+        # 空 dict：无描述路径时页面按空字符串处理，不调 VLM
+        snap = {}
+        if in_region:
+            snap = getattr(self.matcher, 'last_debug_snapshot', None) or {}
+            # 未经描述路径（无规则等）时补一次描述生成
+            if 'description' not in snap:
+                snap = self.matcher.describe_for_debug(
+                    Image.fromarray(cv2.cvtColor(person_img, cv2.COLOR_BGR2RGB)))
+
+        matched = bool(matches)
+        dbg_count = int(time.time() * 1000) % 1000000
+        safe_device_name = device['name'].replace('/', '_').replace('\\', '_')
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        roi_dir = os.path.join(DEBUG_DIR, today, safe_device_name, 'roi')
+        orig_dir = os.path.join(DEBUG_DIR, today, safe_device_name, 'original')
+        os.makedirs(roi_dir, exist_ok=True)
+        os.makedirs(orig_dir, exist_ok=True)
+
+        img_filename = f"debug_{int(time.time() * 1000)}_{dbg_count}.jpg"
+        cv2.imwrite(os.path.join(roi_dir, img_filename), cv2.resize(person_img, (224, 224)))
+        x1, y1, x2, y2 = bbox
+        annotated = frame.copy()
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        draw_roi_overlay(annotated, rects, polys)
+        cv2.imwrite(os.path.join(orig_dir, img_filename), annotated,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+
+        rules = [{'rule_name': m.get('rule_name', ''), 'score': m.get('final_score', 0)}
+                 for m in matches] if matched else []
+
+        # 逐规则得分明细（含未命中/冷却中）：落盘 + stdout 打印；区域外未做匹配，不打
+        rule_details = list(snap.get('rules') or [])
+        # 朝向过滤发生在 match() 之后：快照里被丢弃的规则仍是 hit，改标 orientation
+        if orient_dropped:
+            for d in rule_details:
+                if d.get('status') != 'hit' or not d.get('rule_name'):
+                    continue
+                if d['rule_name'] in orient_dropped:
+                    d['status'] = 'orientation'
+        if in_region:
+            hit_s, miss_s = [], []
+            for d in rule_details:
+                item = (f"{d.get('rule_name', '?')}"
+                        f"({d.get('score', 0)}/{d.get('threshold', 0.5)}阈)")
+                if d.get('type') == 'symbolic' and d.get('missing_attrs'):
+                    item += "[缺:" + ",".join(d['missing_attrs']) + "]"
+                st = d.get('status', '')
+                if st == 'hit':
+                    hit_s.append(item)
+                else:
+                    miss_s.append(item + ('(冷却)' if st == 'cooldown'
+                                          else '(无向量)' if st == 'no_embedding'
+                                          else '(朝向不符)' if st == 'orientation' else ''))
+            print(f"[{safe_device_name}] 🐞 匹配明细 | 命中: {' '.join(hit_s) or '无'}"
+                  f" | 未命中: {' '.join(miss_s) or '无'}")
+
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'device_id': device.get('id', ''),
+            'device_name': device.get('name', ''),
+            'matched': matched,
+            'matched_rules': rules,
+            'rule_details': rule_details,     # 全部规则得分与未命中属性（/debug 页展示）
+            'description': snap.get('description', ''),
+            'description_zh': snap.get('description_zh', ''),
+            'attributes': snap.get('attributes', []),
+            'low_quality': low_quality,
+            'image': f"{today}/{safe_device_name}/roi/{img_filename}",
+            'original_image': f"{today}/{safe_device_name}/original/{img_filename}",
+            'bbox': list(bbox),
+        }
+        if not in_region:
+            entry['outside_roi'] = True   # 区域内条目无此字段，前端按 false 处理
+        if orient_dropped:
+            entry['orientation_filtered'] = orient_dropped   # 被朝向过滤丢弃的规则名
+        append_debug_log(entry)
+
     def _process_detection(self, det, frame):
         """处理单个检测结果 - 独立的错误隔离"""
+        device = self._device_snapshot()
         bbox = det['bbox']
         x1, y1, x2, y2 = bbox
         person_img = frame[y1:y2, x1:x2]
@@ -886,13 +1317,39 @@ class StreamProcessor:
         if person_img.size == 0:
             return
 
-        # 质量检查：宽<64 或 高<32 标记为低质量
+        # 低质量长宽阈值按设备可配（min_box_w/min_box_h），照常告警，仅页面标注
         h, w = person_img.shape[:2]
-        is_low_quality = (w < 64 or h < 32)
+        min_w, min_h = parse_min_box(device)
+        is_low_quality = (w < min_w or h < min_h)
 
         person_pil = Image.fromarray(cv2.cvtColor(person_img, cv2.COLOR_BGR2RGB))
 
         matches = self.matcher.match(person_pil)
+
+        # 朝向事后过滤：orientation_filter 非空时，命中的属性里没有任何允许朝向则丢弃该条。
+        # 丢弃的规则名记进 orient_dropped，调试页据此标「朝向不符」（否则只剩个笼统的未命中）
+        allowed_orient = parse_orientation_filter(device)
+        orient_dropped = []
+        if allowed_orient and matches:
+            kept = []
+            for m in matches:
+                if orientation_allowed(m, allowed_orient):
+                    kept.append(m)
+                else:
+                    print(f"[{device.get('name', 'Unknown')}] 朝向过滤丢弃: "
+                          f"{m.get('rule_name', '?')}（朝向不在勾选范围）")
+                    orient_dropped.append(m.get('rule_name', '?'))
+            matches = kept
+
+        if self.debug_capture:
+            try:
+                self._capture_debug(person_img, frame, bbox, is_low_quality, matches,
+                                    in_region=True, orient_dropped=orient_dropped)
+            except Exception as e:
+                print(f"调试捕获异常: {e}")
+
+        if not matches:
+            return
 
         alert_count = int(time.time() * 1000) % 1000000
 
@@ -912,8 +1369,10 @@ class StreamProcessor:
 
             cv2.imwrite(os.path.join(roi_subdir, img_filename), cv2.resize(person_img, (224, 224)))
 
+            # 原图画框（绿色 2px）+ 青色区域边界
             original_img = frame.copy()
             cv2.rectangle(original_img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 2)
+            draw_roi_overlay(original_img, parse_roi_regions(device), parse_roi_polys(device))
             cv2.imwrite(os.path.join(original_subdir, img_filename), original_img)
 
             print(f"🚨 告警: {match['rule_name']} 正样本分数: {match['final_score']} 负样本分数: {match.get('negative_scores', [])}")
@@ -986,6 +1445,8 @@ class MonitoringManager:
         self.threads = {}
         self.alert_callback = None
         self.tasks = []  # 保存任务列表供后续使用
+        self._refresh_running = False
+        self._refresh_again = False
 
     def start(self):
         """启动监控"""
@@ -1001,15 +1462,29 @@ class MonitoringManager:
         return {'success': True, 'message': f'已启动 {len(self.processors)} 个设备监控'}
 
     def refresh_rules(self):
-        """刷新所有设备的规则"""
+        """刷新所有设备的规则与按设备过滤配置"""
         # 重新加载tasks.json
         if os.path.exists(TASKS_FILE):
             with open(TASKS_FILE, 'r', encoding='utf-8') as f:
                 self.tasks = json.load(f)
 
+        # 顺带刷新设备配置：PUT /api/devices 保存后走同一条刷新链，
+        # ROI 区域/朝向过滤/低质量阈值等按设备配置无需重启即可生效
+        devices = []
+        if os.path.exists(DEVICES_FILE):
+            try:
+                with open(DEVICES_FILE, 'r', encoding='utf-8') as f:
+                    devices = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                devices = []
+
         print("🔄 刷新监控规则...")
         total_updated = 0
         for device_id, processor in self.processors.items():
+            for d in devices:
+                if isinstance(d, dict) and d.get('id') == device_id:
+                    processor.update_device(d)
+                    break
             # 重新加载该设备的规则
             device_rules = []
             for task in self.tasks:
@@ -1028,6 +1503,30 @@ class MonitoringManager:
         print(f"✅ 规则刷新完成，共 {total_updated} 条规则")
 
         return {'success': True, 'message': f'已刷新 {total_updated} 条规则'}
+
+    def refresh_rules_async(self):
+        """HTTP 线程零等待：后台线程执行 refresh_rules（重编码可能要几秒）。
+        已有刷新在跑时只置重刷标记——每次都重读最新 tasks.json/devices.json，
+        补一轮即可覆盖期间的新保存。"""
+        if getattr(self, '_refresh_running', False):
+            self._refresh_again = True
+            return
+        self._refresh_running = True
+
+        def _loop():
+            try:
+                while True:
+                    self._refresh_again = False
+                    try:
+                        self.refresh_rules()
+                    except Exception as e:
+                        print(f"规则刷新失败: {e}")
+                    if not self._refresh_again:
+                        break
+            finally:
+                self._refresh_running = False
+
+        threading.Thread(target=_loop, daemon=True).start()
 
     def stop(self):
         """停止监控"""

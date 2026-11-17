@@ -211,3 +211,4 @@ bash build_scripts/offline/fetch_offline.sh   # 有网机执行
 # 增量模式：命令前加 SKIP_CLEAN=1；代理：PROXY=xxx / PROXY=（不用）前缀
 ```
 - 2026-10-27: 新增 README.md（项目总览/构建/运行/交叉编译/离线构建速查，指向 BUILD_CHANGES 为构建权威）。
+- 2026-11-13: rknn 框架同步收尾（11-12 已同步主体，本次补残余缺口，与 web_vllm_rknn/cpp/src 语义对齐）：①告警按天 API——json_store 加 valid_alert_date()/Paths::alerts_file_for(date)，GET /api/alerts、POST /api/alerts/clear、DELETE /api/alerts/<id> 支持 ?date=YYYY-MM-DD（非法 400），新增 GET /api/alerts/dates（有告警文件的日期新→旧、今天恒首位；templates/alerts.html 早就在调这两处，此前 404 属坏功能）；②删 rknn 已废弃的死端点 /api/rules CRUD 四端点 + /api/logs、/api/logs/clear（模板/static 均无引用，规则统一走 /api/tasks）。不同步项（有意保留差异）：BGE_QUERY_PREFIX 非对称编码、attr_head/expand2square（RKNN 属性头专属）、structured/rule_direct 匹配模式（host 后端能力，rknn 因 W8A8 模型砍掉）。验证：SKIP_CLEAN=1 build_app.sh 增量编译过（build/llama-cpu 缺失，先按 build_thirdparty.sh 同款参数重建了 llama CPU 库）；隔离端口 8090 + 临时 DATA_DIR 实测 dates/400/页面/nav 注入全部符合预期，/api/rules、/api/logs 已 404。

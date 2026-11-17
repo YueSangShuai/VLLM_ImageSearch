@@ -58,18 +58,37 @@ def device_heartbeat():
                 with open(DEVICES_FILE, 'r', encoding='utf-8') as f:
                     devices = json.load(f)
 
-                updated = False
+                # 逐台 RTSP 探测最长数秒×N 台，这期间 /filters、PUT /api/devices
+                # 都可能改文件。曾按「读整份→改→整体写回」做，把并发写入的 roi_* 等
+                # 字段整片覆盖回旧值（实测把刚存的区域配置「复活」，区域形同失效）。
+                # 故这里只暂存 status，写前重读文件、按 id 只合并 status，别的字段一概不碰。
+                new_status = {}   # device id -> status
                 for device in devices:
                     old_status = device.get('status', 'offline')
-                    new_status = test_rtsp_connection(device)
-                    if old_status != new_status:
-                        device['status'] = new_status
-                        updated = True
-                        print(f"📡 设备 '{device['name']}' 状态变更: {old_status} -> {new_status}")
+                    probe = test_rtsp_connection(device)
+                    if old_status != probe:
+                        new_status[device.get('id', '')] = probe
+                        print(f"📡 设备 '{device['name']}' 状态变更: {old_status} -> {probe}")
 
+                if not new_status:
+                    continue
+
+                with open(DEVICES_FILE, 'r', encoding='utf-8') as f:
+                    fresh = json.load(f)
+                updated = False
+                for device in fresh:
+                    if not isinstance(device, dict):
+                        continue
+                    dev_id = device.get('id', '')
+                    if dev_id not in new_status or device.get('status') == new_status[dev_id]:
+                        continue        # 设备已被删除或状态又被别处改了，不越权
+                    device['status'] = new_status[dev_id]
+                    updated = True
                 if updated:
-                    with open(DEVICES_FILE, 'w', encoding='utf-8') as f:
-                        json.dump(devices, f, ensure_ascii=False, indent=2)
+                    tmp = DEVICES_FILE + '.tmp'
+                    with open(tmp, 'w', encoding='utf-8') as f:
+                        json.dump(fresh, f, ensure_ascii=False, indent=2)
+                    os.replace(tmp, DEVICES_FILE)
         except Exception as e:
             print(f"心跳检测异常: {e}")
 
@@ -103,12 +122,36 @@ ALERTS_FILE = os.path.join(DATA_DIR, 'alerts.json')
 ALERTS_DIR = os.path.join(DATA_DIR, 'alerts_images')
 os.makedirs(ALERTS_DIR, exist_ok=True)
 
-def get_alerts_file():
-    """获取当天日期的alerts文件路径"""
-    today = datetime.now().strftime('%Y-%m-%d')
+def valid_alert_date(date):
+    """?date= 参数校验：严格 YYYY-MM-DD（与 C++ 版 valid_alert_date 同口径）"""
+    if not isinstance(date, str) or len(date) != 10:
+        return False
+    for i, c in enumerate(date):
+        if i in (4, 7):
+            if c != '-':
+                return False
+        elif not ('0' <= c <= '9'):
+            return False
+    return True
+
+def alerts_file_for(date=''):
+    """告警按天分文件；date 空 = 今天"""
+    if not date:
+        date = datetime.now().strftime('%Y-%m-%d')
     alerts_subdir = os.path.join(DATA_DIR, 'alerts_history')
     os.makedirs(alerts_subdir, exist_ok=True)
-    return os.path.join(alerts_subdir, f'alerts_{today}.json')
+    return os.path.join(alerts_subdir, f'alerts_{date}.json')
+
+def get_alerts_file():
+    """获取当天日期的alerts文件路径"""
+    return alerts_file_for('')
+
+def _alerts_file_from_request():
+    """按 ?date= 解析本次请求的告警文件；非法日期返回 (None, 400响应)"""
+    date = request.args.get('date', '')
+    if date and not valid_alert_date(date):
+        return None, (jsonify({'error': 'date 必须为 YYYY-MM-DD 格式'}), 400)
+    return alerts_file_for(date), None
 
 # ==================== 设备管理API ====================
 
@@ -164,6 +207,78 @@ def add_device():
 
     return jsonify(device)
 
+# ---- 按设备过滤配置白名单清洗（/api/devices PUT ← /filters 页保存） ----
+
+def _clamp01(v):
+    return 0.0 if v < 0 else (1.0 if v > 1.0 else v)
+
+def sanitize_roi_regions(in_val):
+    """roi_regions: [{x,y,w,h} 归一化 0..1]，逐夹紧、非法项丢弃"""
+    out = []
+    if not isinstance(in_val, list):
+        return out
+    for r in in_val:
+        if not isinstance(r, dict):
+            continue
+        try:
+            x, y, w, h = (float(r['x']), float(r['y']), float(r['w']), float(r['h']))
+        except (KeyError, TypeError, ValueError):
+            continue
+        x, y, w, h = _clamp01(x), _clamp01(y), _clamp01(w), _clamp01(h)
+        if w <= 0 or h <= 0:
+            continue
+        out.append({'x': x, 'y': y, 'w': w, 'h': h})
+    return out
+
+def sanitize_roi_polys(in_val):
+    """roi_polygons: [[{x,y},...] 归一化 0..1]，外层层数与每块顶点数均有上限
+    （区域是每帧解析的，上限防手改 json 把设备线程拖慢）。上限与 parse_roi_polys 保持一致。"""
+    out = []
+    if not isinstance(in_val, list):
+        return out
+    for raw in in_val:
+        if len(out) >= 16:
+            break
+        if not isinstance(raw, list):
+            continue
+        pts = []
+        for pt in raw:
+            if len(pts) >= 64:
+                break
+            if not isinstance(pt, dict) or 'x' not in pt or 'y' not in pt:
+                continue
+            try:
+                x, y = _clamp01(float(pt['x'])), _clamp01(float(pt['y']))
+            except (TypeError, ValueError):
+                continue
+            if pts and pts[-1] == [x, y]:   # 相邻重复点：射线法判定会退化
+                continue
+            pts.append({'x': x, 'y': y})
+        if len(pts) > 1 and pts[0] == pts[-1]:   # 首尾同点 = 显式闭合，运行侧隐式闭合已覆盖
+            pts.pop()
+        if len(pts) < 3:
+            continue
+        area2 = 0.0                             # 鞋带公式：共线/面积极小的退化多边形丢弃
+        n = len(pts)
+        for i in range(n):
+            area2 += pts[i - 1]['x'] * pts[i]['y'] - pts[i]['x'] * pts[i - 1]['y']
+        if abs(area2) < 1e-6:
+            continue
+        out.append(pts)
+    return out
+
+def sanitize_orientation_filter(in_val):
+    """orientation_filter: Front/Side/Back 子集，其余丢弃"""
+    if not isinstance(in_val, list):
+        return []
+    return [a for a in in_val if a in ('Front', 'Side', 'Back')]
+
+def _num_or(v, default):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
 @app.route('/api/devices/<device_id>', methods=['PUT'])
 def update_device(device_id):
     """更新设备"""
@@ -185,11 +300,26 @@ def update_device(device_id):
                 'sub_stream_path': data.get('sub_stream_path', d.get('sub_stream_path', '/ch01_sub')),
                 'stream_type': data.get('stream_type', d.get('stream_type', 'main'))
             })
+            # 按设备过滤配置（/filters 页保存）：缺字段保持原值
+            if 'roi_regions' in data:
+                d['roi_regions'] = sanitize_roi_regions(data['roi_regions'])
+            if 'roi_polygons' in data:
+                d['roi_polygons'] = sanitize_roi_polys(data['roi_polygons'])
+            if 'orientation_filter' in data:
+                d['orientation_filter'] = sanitize_orientation_filter(data['orientation_filter'])
+            for key in ('min_box_w', 'min_box_h'):
+                if key in data:
+                    v = _num_or(data[key], -1)
+                    if 0 <= v <= 4096:
+                        d[key] = int(v)
             break
 
     with open(DEVICES_FILE, 'w', encoding='utf-8') as f:
         json.dump(devices, f, ensure_ascii=False, indent=2)
 
+    # 设备配置热更新走后台刷新链（ROI 区域/朝向过滤/低质量阈值免重启生效）
+    from processor import get_monitor
+    get_monitor().refresh_rules_async()
     return jsonify({'success': True})
 
 @app.route('/api/devices/<device_id>', methods=['DELETE'])
@@ -208,135 +338,7 @@ def delete_device(device_id):
     return jsonify({'success': True})
 
 # ==================== 规则管理API ====================
-
-@app.route('/api/rules', methods=['GET'])
-def get_rules():
-    """获取所有规则"""
-    if os.path.exists(RULES_FILE):
-        with open(RULES_FILE, 'r', encoding='utf-8') as f:
-            rules = json.load(f)
-    else:
-        rules = []
-    return jsonify(rules)
-
-@app.route('/api/rules', methods=['POST'])
-def add_rule():
-    """添加规则"""
-    data = request.json
-    rule = {
-        'id': str(uuid.uuid4()),
-        'name': data.get('name', ''),
-        'text': data.get('text', ''),
-        'positive': data.get('positive', []),
-        'negative': data.get('negative', []),
-        'threshold': float(data.get('threshold', 0.5)),
-        'enabled': data.get('enabled', True),
-        'created_at': datetime.now().isoformat()
-    }
-
-    rules = []
-    if os.path.exists(RULES_FILE):
-        with open(RULES_FILE, 'r', encoding='utf-8') as f:
-            rules = json.load(f)
-
-    rules.append(rule)
-
-    with open(RULES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
-
-    # 同步更新tasks.json（添加到所有使用该规则的设备）
-    if os.path.exists(TASKS_FILE):
-        with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-            tasks = json.load(f)
-        for task in tasks:
-            task['rules'].append({
-                'id': rule['id'],
-                'name': rule['name'],
-                'text': rule.get('text', ''),
-                'positive': rule.get('positive', []),
-                'negative': rule.get('negative', []),
-                'threshold': rule.get('threshold', 0.5),
-                'score_diff': rule.get('score_diff', 0),
-                'enabled': rule.get('enabled', True)
-            })
-        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
-
-    # 刷新监控器中的规则
-    from processor import get_monitor
-    get_monitor().refresh_rules()
-
-    return jsonify(rule)
-
-@app.route('/api/rules/<rule_id>', methods=['PUT'])
-def update_rule(rule_id):
-    """更新规则"""
-    data = request.json
-    rules = []
-    if os.path.exists(RULES_FILE):
-        with open(RULES_FILE, 'r', encoding='utf-8') as f:
-            rules = json.load(f)
-
-    updated_rule = None
-    for r in rules:
-        if r['id'] == rule_id:
-            r.update({
-                'name': data.get('name', r['name']),
-                'text': data.get('text', r['text']),
-                'positive': data.get('positive', r.get('positive', [])),
-                'negative': data.get('negative', r.get('negative', [])),
-                'threshold': float(data.get('threshold', r['threshold'])),
-                'enabled': data.get('enabled', r['enabled'])
-            })
-            updated_rule = r
-            break
-
-    with open(RULES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
-
-    # 同步更新tasks.json中的规则
-    if os.path.exists(TASKS_FILE):
-        with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-            tasks = json.load(f)
-        for task in tasks:
-            for rule in task.get('rules', []):
-                if rule['id'] == rule_id:
-                    rule.update({
-                        'name': data.get('name', rule['name']),
-                        'text': data.get('text', rule.get('text', '')),
-                        'positive': data.get('positive', rule.get('positive', [])),
-                        'negative': data.get('negative', rule.get('negative', [])),
-                        'threshold': float(data.get('threshold', rule.get('threshold', 0.5))),
-                        'score_diff': float(data.get('score_diff', rule.get('score_diff', 0))),
-                        'enabled': data.get('enabled', rule.get('enabled', True))
-                    })
-        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
-
-    # 刷新监控器中的规则
-    from processor import get_monitor
-    get_monitor().refresh_rules()
-
-    return jsonify({'success': True})
-
-@app.route('/api/rules/<rule_id>', methods=['DELETE'])
-def delete_rule(rule_id):
-    """删除规则"""
-    rules = []
-    if os.path.exists(RULES_FILE):
-        with open(RULES_FILE, 'r', encoding='utf-8') as f:
-            rules = json.load(f)
-
-    rules = [r for r in rules if r['id'] != rule_id]
-
-    with open(RULES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
-
-    # 刷新监控器中的规则
-    from processor import get_monitor
-    get_monitor().refresh_rules()
-
-    return jsonify({'success': True})
+# 规则随任务走（/api/tasks），独立 /api/rules CRUD 已随框架同步移除（rknn 侧已删）
 
 # ==================== 任务管理API ====================
 
@@ -376,6 +378,10 @@ def create_task():
     with open(TASKS_FILE, 'w', encoding='utf-8') as f:
         json.dump(tasks, f, ensure_ascii=False, indent=2)
 
+    # 后台刷新规则：不同步等 matcher 放锁（对齐 rknn refreshRulesAsync）
+    from processor import get_monitor
+    get_monitor().refresh_rules_async()
+
     return jsonify(task)
 
 @app.route('/api/tasks/<task_id>', methods=['GET'])
@@ -412,9 +418,9 @@ def update_task(task_id):
     with open(TASKS_FILE, 'w', encoding='utf-8') as f:
         json.dump(tasks, f, ensure_ascii=False, indent=2)
 
-    # 刷新监控器中的规则
+    # 刷新监控器中的规则（后台线程+请求合并，HTTP 零等待）
     from processor import get_monitor
-    get_monitor().refresh_rules()
+    get_monitor().refresh_rules_async()
 
     return jsonify({'success': True})
 
@@ -430,6 +436,10 @@ def delete_task(task_id):
 
     with open(TASKS_FILE, 'w', encoding='utf-8') as f:
         json.dump(tasks, f, ensure_ascii=False, indent=2)
+
+    # 此前删任务不刷新，规则残留到下次重启
+    from processor import get_monitor
+    get_monitor().refresh_rules_async()
 
     return jsonify({'success': True})
 
@@ -501,12 +511,32 @@ def serve_placeholder(text):
 
 # ==================== 告警API ====================
 
+# 告警按天分文件存储；以下接口均支持 ?date=YYYY-MM-DD（缺省 = 今天）
+
+@app.route('/api/alerts/dates', methods=['GET'])
+def get_alert_dates():
+    """有告警文件的日期（新→旧），供前端日期下拉框用；今天永远排第一"""
+    today = datetime.now().strftime('%Y-%m-%d')
+    dates = [today]
+    alerts_subdir = os.path.join(DATA_DIR, 'alerts_history')
+    found = []
+    if os.path.isdir(alerts_subdir):
+        for name in os.listdir(alerts_subdir):
+            if name.startswith('alerts_') and name.endswith('.json'):
+                d = name[len('alerts_'):-len('.json')]
+                if valid_alert_date(d) and d != today:
+                    found.append(d)
+    found.sort(reverse=True)
+    return jsonify(dates + found)
+
 @app.route('/api/alerts', methods=['GET'])
 def get_alerts():
-    """获取告警列表 - 读取当天文件"""
-    today_alerts_file = get_alerts_file()
-    if os.path.exists(today_alerts_file):
-        with open(today_alerts_file, 'r', encoding='utf-8') as f:
+    """获取告警列表 - 默认当天，可 ?date= 指定"""
+    alerts_file, err = _alerts_file_from_request()
+    if err:
+        return err
+    if os.path.exists(alerts_file):
+        with open(alerts_file, 'r', encoding='utf-8') as f:
             alerts = json.load(f)
     else:
         alerts = []
@@ -516,12 +546,14 @@ def get_alerts():
 @app.route('/api/alerts/<alert_id>', methods=['DELETE'])
 def delete_alert(alert_id):
     """删除告警"""
-    today_alerts_file = get_alerts_file()
-    temp_file = today_alerts_file + '.tmp'
+    alerts_file, err = _alerts_file_from_request()
+    if err:
+        return err
+    temp_file = alerts_file + '.tmp'
     alerts = []
     try:
-        if os.path.exists(today_alerts_file):
-            with open(today_alerts_file, 'r', encoding='utf-8') as f:
+        if os.path.exists(alerts_file):
+            with open(alerts_file, 'r', encoding='utf-8') as f:
                 alerts = json.load(f)
     except (json.JSONDecodeError, Exception):
         alerts = []
@@ -530,36 +562,61 @@ def delete_alert(alert_id):
 
     with open(temp_file, 'w', encoding='utf-8') as f:
         json.dump(alerts, f, ensure_ascii=False, indent=2)
-    os.replace(temp_file, today_alerts_file)
+    os.replace(temp_file, alerts_file)
 
     return jsonify({'success': True})
 
 @app.route('/api/alerts/clear', methods=['POST'])
 def clear_alerts():
-    """清空当天告警"""
-    today_alerts_file = get_alerts_file()
-    with open(today_alerts_file, 'w', encoding='utf-8') as f:
+    """清空告警（默认当天，可 ?date= 指定）"""
+    alerts_file, err = _alerts_file_from_request()
+    if err:
+        return err
+    with open(alerts_file, 'w', encoding='utf-8') as f:
         json.dump([], f)
     return jsonify({'success': True})
 
-@app.route('/api/logs', methods=['GET'])
-def get_logs():
-    """获取检测日志"""
-    from processor import LOG_FILE
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r', encoding='utf-8') as f:
-            logs = json.load(f)
+# ==================== 调试捕获 API（VLM_DEBUG_CAPTURE） ====================
+
+@app.route('/api/debug', methods=['GET'])
+def get_debug_log():
+    """调试捕获日志（最新在前），可选 ?limit=N 截断"""
+    from processor import DEBUG_LOG_FILE
+    if os.path.exists(DEBUG_LOG_FILE):
+        try:
+            with open(DEBUG_LOG_FILE, 'r', encoding='utf-8') as f:
+                logs = json.load(f)
+            if not isinstance(logs, list):
+                logs = []
+        except (json.JSONDecodeError, Exception):
+            logs = []
     else:
         logs = []
+
+    limit = request.args.get('limit', type=int)
+    if limit is not None and limit >= 0:
+        logs = logs[:limit]
     return jsonify(logs)
 
-@app.route('/api/logs/clear', methods=['POST'])
-def clear_logs():
-    """清空检测日志"""
-    from processor import LOG_FILE
-    with open(LOG_FILE, 'w', encoding='utf-8') as f:
+@app.route('/api/debug/clear', methods=['POST'])
+def clear_debug_log():
+    """清空调试日志并删除调试图片目录（防磁盘堆积）"""
+    import shutil
+    from processor import DEBUG_DIR, DEBUG_LOG_FILE
+    if os.path.isdir(DEBUG_DIR):
+        shutil.rmtree(DEBUG_DIR, ignore_errors=True)
+    os.makedirs(DEBUG_DIR, exist_ok=True)
+    with open(DEBUG_LOG_FILE, 'w', encoding='utf-8') as f:
         json.dump([], f)
     return jsonify({'success': True})
+
+@app.route('/data/debug_images/<path:filename>')
+def serve_debug_image(filename):
+    """提供调试图片（与告警图同款 1 小时缓存）"""
+    from processor import DEBUG_DIR
+    response = send_from_directory(DEBUG_DIR, filename)
+    response.headers['Cache-Control'] = 'public, max-age=3600'
+    return response
 
 @app.route('/data/alerts_images/<path:filename>')
 def serve_alert_image(filename):
@@ -592,11 +649,12 @@ def get_model_info():
 @app.route('/api/monitoring/status', methods=['GET'])
 def get_monitoring_status():
     """获取监控状态"""
-    from processor import get_monitor
+    from processor import get_monitor, DEBUG_CAPTURE
     monitor = get_monitor()
     return jsonify({
         'running': monitor.is_running(),
         'device_count': len(monitor.processors),
+        'debug_capture': DEBUG_CAPTURE,
         'model': get_model_info()
     })
 
@@ -627,21 +685,51 @@ def stop_monitoring():
 
 # ==================== 页面路由 ====================
 
+def _inject_nav(html, href, label):
+    """在公共导航最后一个链接后追加入口（同 C++ 版 inject*NavLink，模板零改动）"""
+    nav = html.find('</nav>')
+    if nav == -1:
+        return html
+    a = html.rfind('</a>', 0, nav)
+    if a == -1:
+        return html
+    a += len('</a>')
+    return html[:a] + f'\n            <a href="{href}" class="nav-link">{label}</a>' + html[a:]
+
+def render_page(name):
+    from processor import DEBUG_CAPTURE
+    html = render_template(name + '.html')
+    # 调试捕获开启时给公共导航注入 /debug 入口（模板与 C++ 版共用，源码不动）
+    if DEBUG_CAPTURE and name != 'debug':
+        html = _inject_nav(html, '/debug', '调试捕获')
+    # 「区域与过滤」入口常驻注入；debug/filters 页自带完整导航，不重复注入
+    if name not in ('debug', 'filters'):
+        html = _inject_nav(html, '/filters', '区域与过滤')
+    return html
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_page('index')
 
 @app.route('/devices')
 def devices_page():
-    return render_template('devices.html')
+    return render_page('devices')
 
 @app.route('/rules')
 def rules_page():
-    return render_template('rules.html')
+    return render_page('rules')
 
 @app.route('/alerts')
 def alerts_page():
-    return render_template('alerts.html')
+    return render_page('alerts')
+
+@app.route('/debug')
+def debug_page():
+    return render_page('debug')
+
+@app.route('/filters')
+def filters_page():
+    return render_page('filters')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5003, debug=False, use_reloader=False)
