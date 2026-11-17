@@ -4,8 +4,11 @@
 #include "util.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -155,6 +158,177 @@ static void injectFiltersNavLink(std::string & html) {
     html.insert(a, "\n            <a href=\"/filters\" class=\"nav-link\">区域与过滤</a>");
 }
 
+// ==================== 设备硬件信息（/api/system_info） ====================
+// 全部走 proc/sysfs，无外部依赖：
+//  - 芯片/板型：/proc/device-tree/compatible，NUL 分隔（如 "friendlyelec,nanopi-r6s\0rockchip,rk3588\0"）
+//  - 内存：/proc/meminfo
+//  - NPU 实时负载：/sys/class/devfreq/fdab0000.npu/load（"忙碌比@频率Hz"）。板端服务以
+//    非 root 的 pi 跑，读不了 /sys/kernel/debug/rknpu/load（debugfs 0700）；devfreq 节点
+//    全局可读，root 下再顺带补 debugfs 的三核明细。
+
+static double devfreq_pct(const std::string & content, double & freq_mhz) {
+    // devfreq load 文件 "忙碌比@频率Hz"（如 "78@1000000000Hz"）→ 78.0 + 1000 MHz；
+    // 纯数字（个别内核不带 @）也兼容。解析失败返回 -1。
+    freq_mhz = 0;
+    size_t at = content.find('@');
+    std::string pct_part = at == std::string::npos ? content : content.substr(0, at);
+    if (at != std::string::npos) {
+        double hz = 0;
+        for (size_t i = at + 1; i < content.size() && isdigit((unsigned char)content[i]); i++)
+            hz = hz * 10 + (content[i] - '0');
+        freq_mhz = hz / 1e6;
+    }
+    try { return stod(pct_part); } catch (...) { return -1; }
+}
+
+static json collectSystemInfo() {
+    json info = json::object();
+
+    // 芯片/板型
+    std::string compat = read_file("/proc/device-tree/compatible");
+    std::string chip, chip_raw, board;
+    for (size_t pos = 0; pos < compat.size();) {
+        size_t end = compat.find('\0', pos);
+        if (end == std::string::npos) end = compat.size();
+        std::string item = compat.substr(pos, end - pos);
+        pos = end + 1;
+        if (item.empty()) continue;
+        if (chip.empty() && item.rfind("rockchip,", 0) == 0) {
+            chip_raw = item;
+            chip = item.substr(9);
+            for (char & c : chip) c = (char)toupper((unsigned char)c);
+        } else if (board.empty()) {
+            board = item;
+        }
+    }
+    info["chip"] = chip.empty() ? "未知平台" : chip;
+    info["chip_raw"] = chip_raw;
+    info["board"] = board;
+
+    // CPU 核数
+    std::string cpuinfo = read_file("/proc/cpuinfo");
+    int cores = 0;
+    for (size_t pos = 0; (pos = cpuinfo.find("processor", pos)) != std::string::npos; pos += 9)
+        if (pos == 0 || cpuinfo[pos - 1] == '\n') cores++;
+    info["cpu_cores"] = cores;
+
+    // 内存（kB → MB）
+    long total_kb = 0, avail_kb = 0;
+    std::string meminfo = read_file("/proc/meminfo");
+    for (const char * key : {"MemTotal:", "MemAvailable:"}) {
+        size_t at = meminfo.find(key);
+        if (at == std::string::npos) continue;
+        long v = atol(meminfo.c_str() + at + strlen(key));
+        if (key[3] == 'T') total_kb = v; else avail_kb = v;   // MemTotal vs MemAvailable
+    }
+    info["mem_total_mb"] = total_kb / 1024;
+    info["mem_used_mb"] = (total_kb - avail_kb) / 1024;
+    info["mem_used_pct"] = total_kb > 0 ? (double)(total_kb - avail_kb) * 100.0 / (double)total_kb : 0.0;
+
+    // NPU 实时负载（devfreq）
+    json npu = json::object();
+    const char * npu_node = getenv("NPU_DEVFREQ_NODE");
+    std::string node = npu_node && *npu_node ? npu_node : "/sys/class/devfreq/fdab0000.npu";
+    std::string load = read_file(node + "/load");
+    if (!load.empty()) {
+        double mhz = 0, pct = devfreq_pct(load, mhz);
+        npu["available"] = pct >= 0;
+        npu["load_pct"] = pct < 0 ? 0.0 : pct;
+        if (mhz > 0) npu["cur_freq_mhz"] = (int)(mhz + 0.5);
+        std::string maxf = read_file(node + "/max_freq");
+        try { if (!maxf.empty()) npu["max_freq_mhz"] = atoi(maxf.c_str()) / 1000000; } catch (...) {}
+        // root 运行时补 rknpu debugfs 三核明细（"Load:  a%, b%, c%"）
+        std::string dbg = read_file("/sys/kernel/debug/rknpu/load");
+        if (!dbg.empty()) {
+            json core = json::array();
+            std::string digits;
+            for (char c : dbg) {
+                if (isdigit((unsigned char)c)) digits += c;
+                else if (c == '%') { core.push_back(atoi(digits.c_str())); digits.clear(); }
+            }
+            if (!core.empty()) npu["core_load_pct"] = core;
+        }
+    } else {
+        npu["available"] = false;
+    }
+    info["npu"] = npu;
+    return info;
+}
+
+// 硬件信息卡片注入首页 dashboard 首位 + 独立轮询脚本（2s 刷新内存/NPU）。
+// index 模板与 web_vllm_cpp 共享（x86 版无 NPU、无 RK 芯片），模板不动，下发时注入。
+static void injectSystemPanel(std::string & html) {
+    static const std::string anchor = "<div class=\"dashboard\">";
+    size_t pos = html.find(anchor);
+    if (pos == std::string::npos) return;
+    static const char * card = R"HTML(
+            <div class="card">
+                <h3>设备信息</h3>
+                <div class="stat">
+                    <span class="stat-value" id="sysChip" style="font-size:22px">-</span>
+                    <span class="stat-label" id="sysBoardLabel">芯片</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="sysCores" style="font-size:22px">-</span>
+                    <span class="stat-label">CPU 核数</span>
+                </div>
+                <div style="margin-top:14px">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#555">
+                        <span>内存</span><span id="memText">-</span>
+                    </div>
+                    <div style="height:8px;background:#e2e8f0;border-radius:4px;margin-top:4px;overflow:hidden">
+                        <div id="memBar" style="height:100%;width:0%;background:#4299e1;border-radius:4px;transition:width .6s"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;color:#555;margin-top:10px">
+                        <span>NPU 使用率 <span id="npuFreq" style="color:#888;margin-left:6px"></span></span>
+                        <span id="npuText">-</span>
+                    </div>
+                    <div style="height:8px;background:#e2e8f0;border-radius:4px;margin-top:4px;overflow:hidden">
+                        <div id="npuBar" style="height:100%;width:0%;background:#48bb78;border-radius:4px;transition:width .6s"></div>
+                    </div>
+                </div>
+            </div>
+)HTML";
+    static const char * script = R"JS(
+    <script>
+        async function loadSystemInfo() {
+            try {
+                const info = await (await fetch("/api/system_info")).json();
+                document.getElementById('sysChip').textContent = info.chip || '-';
+                const boardEl = document.getElementById('sysBoardLabel');
+                boardEl.textContent = info.board || '芯片';
+                boardEl.title = info.chip_raw || '';
+                document.getElementById('sysCores').textContent = info.cpu_cores || '-';
+                const memPct = info.mem_used_pct || 0;
+                document.getElementById('memText').textContent = info.mem_total_mb
+                    ? (info.mem_used_mb + ' / ' + info.mem_total_mb + ' MB (' + memPct.toFixed(1) + '%)') : '-';
+                document.getElementById('memBar').style.width = Math.min(100, memPct) + '%';
+                const npu = info.npu || {};
+                const npuText = document.getElementById('npuText');
+                const npuBar = document.getElementById('npuBar');
+                if (npu.available) {
+                    const load = npu.load_pct || 0;
+                    npuText.textContent = load.toFixed(1) + '%'
+                        + (npu.core_load_pct ? ' (核: ' + npu.core_load_pct.join('/') + '%)' : '');
+                    npuBar.style.width = Math.min(100, load) + '%';
+                    npuBar.style.background = load < 50 ? '#48bb78' : (load < 80 ? '#ed8936' : '#e53e3e');
+                    document.getElementById('npuFreq').textContent = npu.cur_freq_mhz ? npu.cur_freq_mhz + ' MHz' : '';
+                } else {
+                    npuText.textContent = '不可用';
+                }
+            } catch (e) {
+                console.error('加载设备信息失败:', e);
+            }
+        }
+        setInterval(loadSystemInfo, 2000);
+        loadSystemInfo();
+    </script>
+)JS";
+    html.insert(pos + anchor.size(), card);
+    size_t body = html.rfind("</body>");
+    if (body != std::string::npos) html.insert(body, script);
+}
+
 // 与 app.py test_rtsp_connection 对齐：主码流 + URL 编码，能取到 1 帧即 online
 static std::string test_rtsp_connection(const json & device) {
     std::string port = device.value("port", std::string("554"));
@@ -287,6 +461,8 @@ void Server::setup_routes() {
             if (cfg_.debug_capture && name != "debug") injectDebugNavLink(html);
             // debug/filters 是 rknn 特有页、自带完整导航，不重复注入
             if (name != "debug" && name != "filters") injectFiltersNavLink(html);
+            // 硬件信息卡片（芯片/内存/NPU 实时）只注入首页
+            if (name == "index") injectSystemPanel(html);
             applyPrefix(html);   // 导航注入之后再重写绝对路径，注入的链接一并带上前缀
             res.set_content(html, "text/html; charset=utf-8");
         };
@@ -310,6 +486,11 @@ void Server::setup_routes() {
         else if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, ".html") == 0) mime = "text/html; charset=utf-8";
         if (mime != "application/octet-stream") applyPrefix(body);   // 文本资源同样重写；二进制跳过
         res.set_content(body, mime.c_str());
+    });
+
+    // ==================== 硬件信息（芯片/内存/NPU 实时负载） ====================
+    svr_.Get("/api/system_info", [](const httplib::Request &, httplib::Response & res) {
+        res_json(res, collectSystemInfo());
     });
 
     // ==================== 设备管理 ====================
