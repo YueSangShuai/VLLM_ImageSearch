@@ -1,0 +1,232 @@
+{
+ "structured": {
+  "gt_micro_f1": {
+   "host_bf16_valid": {
+    "tp": 52,
+    "fp": 89,
+    "fn": 329,
+    "P": 0.3688,
+    "R": 0.1365,
+    "F1": 0.1992
+   },
+   "w8a8_valid": {
+    "tp": 166,
+    "fp": 339,
+    "fn": 215,
+    "P": 0.3287,
+    "R": 0.4357,
+    "F1": 0.3747
+   },
+   "host_bf16_head": {
+    "tp": 329,
+    "fp": 113,
+    "fn": 52,
+    "P": 0.7443,
+    "R": 0.8635,
+    "F1": 0.7995
+   },
+   "w8a8_head": {
+    "tp": 332,
+    "fp": 115,
+    "fn": 49,
+    "P": 0.7427,
+    "R": 0.8714,
+    "F1": 0.8019
+   }
+  },
+  "w8a8_vs_bf16_agreement": {
+   "valid": {
+    "P": 0.1921,
+    "R": 0.6879,
+    "F1": 0.3003
+   },
+   "head": {
+    "P": 0.9866,
+    "R": 0.9977,
+    "F1": 0.9921
+   }
+  },
+  "w8a8_invalid_tokens": {
+   "total": 601,
+   "per_img": 12.02,
+   "top10": [
+    [
+     "yellow",
+     26
+    ],
+    [
+     "grey",
+     19
+    ],
+    [
+     "brown",
+     10
+    ],
+    [
+     "pink",
+     10
+    ],
+    [
+     "bottoms",
+     9
+    ],
+    [
+     "wht",
+     9
+    ],
+    [
+     "color",
+     9
+    ],
+    [
+     "pattern",
+     9
+    ],
+    [
+     "nearby",
+     9
+    ],
+    [
+     "sleeveless",
+     8
+    ]
+   ]
+  },
+  "w8a8_enumeration_imgs": 2,
+  "bf16_invalid_tokens_total": 1036,
+  "bf16_enumeration_imgs": 0,
+  "top_divergent_examples": [
+   {
+    "file": "048_099484.jpg",
+    "bf16_valid": [
+     "Female",
+     "uwhite"
+    ],
+    "w8a8_valid": [
+     "Female",
+     "Age18-60",
+     "LowerStripe",
+     "UpperLogo",
+     "HoldObjectsInFront",
+     "Trousers",
+     "Glasses",
+     "Front",
+     "Back",
+     "Backpack",
+     "ShoulderBag",
+     "HandBag",
+     "Shorts",
+     "Skirt&Dress",
+     "lwhite",
+     "uorange"
+    ],
+    "w8a8_raw": "Female,Age18-60,LowerStripe,UpperLogo,HoldObjectsInFront,Trousers,Sleeveless,Glasses,Front,Back,ClothingColor:ugreen,Backpack,ShoulderBag,Handbag,Shorts,Skirt&Dress,lwhite,uorange"
+   },
+   {
+    "file": "004_091215.jpg",
+    "bf16_valid": [
+     "Female",
+     "Side",
+     "uwhite"
+    ],
+    "w8a8_valid": [
+     "Female",
+     "Side",
+     "Hat",
+     "Glasses",
+     "LowerStripe",
+     "LowerPattern",
+     "Trousers",
+     "Shorts",
+     "Skirt&Dress",
+     "uwhite",
+     "uorange",
+     "ublue",
+     "ugreen",
+     "upurple",
+     "ured",
+     "lstriped_color",
+     "lmulticolor"
+    ],
+    "w8a8_raw": "Female,Side,Hat,Glasses,LowerStripe,LowerPattern,Trousers,Shorts,Skirt&Dress,Uwhite,uorange,ublue,ugreen,upurple,ured,brown,yellow,pink,ocean blue,grey,multi color,lstriped_color,lmulticolor"
+   },
+   {
+    "file": "028_094653.jpg",
+    "bf16_valid": [
+     "Female",
+     "UpperStride"
+    ],
+    "w8a8_valid": [
+     "Front",
+     "Side",
+     "LowerStripe",
+     "HoldObjectsInFront",
+     "Trousers",
+     "uwhite",
+     "Glasses",
+     "Age18-60",
+     "Backpack",
+     "Shorts",
+     "UpperLogo",
+     "LowerPattern"
+    ],
+    "w8a8_raw": "Front,Side,LowerStripe,HoldObjectsInFront,Trousers,BagsAndBelt,MixedColorOfClothing,UWhite,ClothesOnHead,Footwear,Glasses,Age18-60,Backpack,Shorts,UpperLogo,LowerPattern,YellowStripedTops"
+   }
+  ]
+ },
+ "description": {
+  "n_rules": 18,
+  "best_rule_score": {
+   "mean_bf16": 0.6233,
+   "mean_w8a8": 0.6257,
+   "delta_mean": 0.0025,
+   "delta_min": -0.1457,
+   "delta_max": 0.1344
+  },
+  "alert_rate": {
+   "bf16": 0.86,
+   "w8a8": 0.86,
+   "note": "任意图上任规则分≥板端阈值(缺省0.45)记告警"
+  },
+  "len_mean_chars": {
+   "bf16": 41.1,
+   "w8a8": 35.8
+  },
+  "hedge_hits_per_img": {
+   "bf16": 0.0,
+   "w8a8": 0.0
+  },
+  "per_rule_delta_worst5": [
+   {
+    "rule": "13:骑电动车的人",
+    "bf16": 0.3548,
+    "w8a8": 0.3195,
+    "delta": -0.0354
+   },
+   {
+    "rule": "3:戴眼镜的男生",
+    "bf16": 0.4003,
+    "w8a8": 0.3736,
+    "delta": -0.0267
+   },
+   {
+    "rule": "16:戴眼镜的男生",
+    "bf16": 0.4003,
+    "w8a8": 0.3736,
+    "delta": -0.0267
+   },
+   {
+    "rule": "4:戴眼镜的女生",
+    "bf16": 0.3669,
+    "w8a8": 0.3533,
+    "delta": -0.0136
+   },
+   {
+    "rule": "17:戴眼镜的女生",
+    "bf16": 0.3669,
+    "w8a8": 0.3533,
+    "delta": -0.0136
+   }
+  ]
+ }
+}

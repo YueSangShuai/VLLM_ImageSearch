@@ -117,7 +117,10 @@ if "description" in board and not args.no_bge:
 
     BGE = "/data/yuesang/LLM/FG-CLIP/models/bge-small-zh-v1.5"
     PREFIX = "为这个句子生成表示以用于检索相关文章："
-    RULE_KEYS = ("feature", "features", "rule", "description", "query", "text", "content", "name")
+    # 规则文本字段候选。注意线上 BGE query 具体用哪个字段与 matcher 实现相关，
+    # 这里用「正向描述」优先（positive/feature/description），退化到 name。
+    RULE_KEYS = ("positive", "feature", "features", "description", "rule", "query",
+                 "text", "content", "name")
 
     def rule_text(r):
         if isinstance(r, str):
@@ -128,16 +131,22 @@ if "description" in board and not args.no_bge:
                 return v
         return ""
 
-    rules = [rule_text(r) for r in json.load(open(os.path.join(S, "board_rules", "rules.json")))]
-    rules = [r for r in rules if r]
-    thr_map, thr_default = {}, 0.45
-    try:
-        for t in json.load(open(os.path.join(S, "board_rules", "tasks.json"))):
-            rt, th = rule_text(t), t.get("threshold")
-            if rt and isinstance(th, (int, float)):
-                thr_map[rt] = th
-    except Exception:
-        pass
+    # rules.json 现网为空 []；规则在 tasks.json 的 tasks[].rules[] 里。
+    # 线上口径：每条规则有 positive query 列表（BGE query 侧加前缀）+ threshold。
+    rules, thr_default = [], 0.45
+    tasks = json.load(open(os.path.join(S, "board_rules", "tasks.json")))
+    for t in tasks if isinstance(tasks, list) else []:
+        for r in t.get("rules", []) if isinstance(t, dict) else []:
+            qs = [q for q in (r.get("positive") or []) if isinstance(q, str) and q.strip()]
+            if not qs:
+                rt = rule_text(r)
+                qs = [rt] if rt else []
+            if not qs:
+                continue
+            th = r.get("threshold")
+            rules.append({"name": r.get("name", qs[0]), "queries": qs,
+                          "thr": th if isinstance(th, (int, float)) else thr_default,
+                          "enabled": r.get("enabled", True)})
 
     m = SentenceTransformer(BGE, device="cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -147,31 +156,40 @@ if "description" in board and not args.no_bge:
 
     h_desc = {it["file"]: it["raw"] for it in desc["items"]}
     b_desc = {f: board["description"][f]["raw"] for f in files}
-    Q = m.encode([PREFIX + r for r in rules], normalize_embeddings=True, convert_to_numpy=True)
+    # 全部 positive query 展平编码；按 rule 归组取 max
+    q_texts, q_owner = [], []
+    for i, r in enumerate(rules):
+        for q in r["queries"]:
+            q_texts.append(q)
+            q_owner.append(i)
+    Q = m.encode([PREFIX + q for q in q_texts], normalize_embeddings=True, convert_to_numpy=True)
 
     def per_image(dmap):
-        """-> (每图全规则最佳分 list, 每规则逐图分 dict, 每图是否有规则过阈)"""
+        """-> (每图最优规则分 list, 每规则逐图分 dict, 每图是否过阈告警)"""
         best, alert = [], []
-        per_rule = {r: [] for r in rules}
+        per_rule = {f"{i}:{r['name']}": [] for i, r in enumerate(rules)}
         for f in files:
             C = m.encode(clauses(dmap[f]), normalize_embeddings=True, convert_to_numpy=True)
-            S_ = Q @ C.T                                  # [rules, clauses]
-            mx = S_.max(axis=1)                           # 每规则取本图最佳分句
-            for r, v in zip(rules, mx):
-                per_rule[r].append(float(v))
-            best.append(float(mx.max()))
-            alert.append(any(mx[i] >= thr_map.get(r, thr_default)
-                             for i, r in enumerate(rules)))
+            S_ = Q @ C.T                                  # [queries, clauses]
+            q_best = S_.max(axis=1)                       # 每 query 取本图最佳分句
+            rule_scores = []
+            for i, r in enumerate(rules):
+                s = max(float(q_best[j]) for j in range(len(q_texts)) if q_owner[j] == i)
+                rule_scores.append(s)
+                if r["enabled"]:
+                    per_rule[f"{i}:{r['name']}"].append(s)
+            best.append(max(rule_scores))
+            alert.append(any(s >= r["thr"] for s, r in zip(rule_scores, rules) if r["enabled"]))
         return best, per_rule, alert
 
     hb, h_pr, h_al = per_image(h_desc)
     bb, b_pr, b_al = per_image(b_desc)
     deltas = [x - y for x, y in zip(bb, hb)]
-    rule_delta = sorted(({"rule": r,
-                          "bf16": round(float(np.mean(h_pr[r])), 4),
-                          "w8a8": round(float(np.mean(b_pr[r])), 4),
-                          "delta": round(float(np.mean(b_pr[r]) - np.mean(h_pr[r])), 4)}
-                         for r in rules), key=lambda x: x["delta"])
+    rule_delta = sorted(({"rule": key,
+                          "bf16": round(float(np.mean(vals)), 4),
+                          "w8a8": round(float(np.mean(b_pr[key])), 4),
+                          "delta": round(float(np.mean(b_pr[key]) - np.mean(vals)), 4)}
+                         for key, vals in h_pr.items()), key=lambda x: x["delta"])
 
     out["description"] = {
         "n_rules": len(rules),
