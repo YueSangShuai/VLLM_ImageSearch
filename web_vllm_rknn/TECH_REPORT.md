@@ -38,7 +38,7 @@ output_cpp/
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `VLM_MODEL_NAME` | `models/qwen3-vl_vision_rk3588.rknn` | 视觉塔（ViT+merger），448×448 固定输入，输出 196 token × 2048 维 |
+| `VLM_MODEL_NAME` | `models/zkteco-person-describe-ft-vl-2b-rk3588.rknn` | 视觉塔（ViT+merger），448×448 固定输入，输出 196 token × 2048 维 |
 | `VLM_MMPROJ_PATH` | `models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm` | 变量名沿用历史，**实指语言塔 `.rkllm`**（W8A8 量化） |
 | `RKLLM_NPU_CORE_NUM` | 3 | 占满三核 NPU |
 

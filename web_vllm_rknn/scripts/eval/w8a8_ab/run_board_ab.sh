@@ -28,7 +28,7 @@ timeout 120 $SSH 30 "pkill -x web_vllm_rknn || true; pkill -f '[w]eb_vllm_rknn_q
 timeout 120 $SSH 20 "pgrep -a -f web_vllm_rknn | grep -v ssh || echo NO_SERVICE" | tail -2
 
 # ---- 3. 启动批量生成（nohup，日志 abset/run.log）----
-RUNENV="cd $BD && export LD_LIBRARY_PATH=$BD/lib VLM_MODEL_NAME=$BD/models/qwen3-vl_vision_rk3588.rknn VLM_MMPROJ_PATH=$BD/models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm VLM_ATTR_HEAD_PATH=$BD/models/attr_head.bin RKLLM_NPU_CORE_NUM=3 && rm -f abset/w8a8.jsonl abset/run.log && setsid nohup ./ab_dump --images abset/images --out abset/w8a8.jsonl --prompts abset/prompts.json > abset/run.log 2>&1 < /dev/null & echo LAUNCHED"
+RUNENV="cd $BD && export LD_LIBRARY_PATH=$BD/lib VLM_MODEL_NAME=$BD/models/zkteco-person-describe-ft-vl-2b-rk3588.rknn VLM_MMPROJ_PATH=$BD/models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm VLM_ATTR_HEAD_PATH=$BD/models/attr_head.bin RKLLM_NPU_CORE_NUM=3 && rm -f abset/w8a8.jsonl abset/run.log && setsid nohup ./ab_dump --images abset/images --out abset/w8a8.jsonl --prompts abset/prompts.json > abset/run.log 2>&1 < /dev/null & echo LAUNCHED"
 timeout 60 $SSH 30 "$RUNENV" >/dev/null
 sleep 20
 timeout 120 $SSH 25 "pgrep -a ab_dump | head -1; tail -3 abset/run.log" || say "check #1 failed (wrapper 假失败常见)"

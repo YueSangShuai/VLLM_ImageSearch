@@ -81,7 +81,7 @@ Config Config::load() {
     // vlm_model_path -> 视觉塔 .rknn；mmproj_path -> 语言塔 .rkllm
     // 默认=未微调基座 Qwen3-VL-2B-Instruct（2026-10-29 起；实际运行以 run_web_rk.sh 导出为准）
     c.vlm_model_path = getenv_str("VLM_MODEL_NAME",
-        "/home/pi/output_rk3588/models/qwen3-vl_vision_rk3588.rknn");
+        "/home/pi/output_rk3588/models/zkteco-person-describe-ft-vl-2b-rk3588.rknn");
     c.mmproj_path = getenv_str("VLM_MMPROJ_PATH",
         "/home/pi/output_rk3588/models/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm");
     c.n_ctx = (int)getenv_int("VLM_GGUF_N_CTX", 4096);

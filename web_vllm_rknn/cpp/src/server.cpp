@@ -158,6 +158,14 @@ static void injectFiltersNavLink(std::string & html) {
     html.insert(a, "\n            <a href=\"/filters\" class=\"nav-link\">区域与过滤</a>");
 }
 
+// 平台更名：共享模板标题/导航仍叫「多模态大模型文搜实测平台」，本平台下发时整体替换为
+// 「多模态大模型文本布控平台」（模板与 web_vllm_cpp 共用、模板源不动；UTF-8 按字节整词替换）
+static void renamePlatform(std::string & html) {
+    static const std::string from = "多模态大模型文搜实测平台", to = "多模态大模型文本布控平台";
+    for (size_t pos = 0; (pos = html.find(from, pos)) != std::string::npos; pos += to.size())
+        html.replace(pos, from.size(), to);
+}
+
 // ==================== 设备硬件信息（/api/system_info） ====================
 // 全部走 proc/sysfs，无外部依赖：
 //  - 芯片/板型：/proc/device-tree/compatible，NUL 分隔（如 "friendlyelec,nanopi-r6s\0rockchip,rk3588\0"）
@@ -430,12 +438,25 @@ void Server::setup_routes() {
     // const_cast 改写 path 良定义。不带前缀的原路径照常兼容（代理已剥 / 本机脚本沿用）。
     if (!cfg_.url_prefix.empty()) {
         svr_.set_pre_routing_handler([p = cfg_.url_prefix](const httplib::Request &req,
-                                                           httplib::Response &) {
+                                                           httplib::Response &res) {
             auto &r = const_cast<httplib::Request &>(req);
-            if (r.path == p) r.path = "/";
-            else if (r.path.size() > p.size() && r.path.compare(0, p.size(), p) == 0 &&
-                     r.path[p.size()] == '/')
+            if (r.path == p) { r.path = "/"; return httplib::Server::HandlerResponse::Unhandled; }
+            if (r.path.size() > p.size() && r.path.compare(0, p.size(), p) == 0 &&
+                r.path[p.size()] == '/') {
                 r.path = r.path.substr(p.size());
+                return httplib::Server::HandlerResponse::Unhandled;
+            }
+            // 裸页面地址 + 浏览器导航请求（Accept 含 text/html）→ 302 到带前缀形态，
+            // 地址栏统一成 http://<板>:5003/x-search/…。/api/、/static/、/data/ 不跳：
+            // 本机 curl 脚本与老书签照常兼容（curl 默认不跟 302，绝不能把它卷进来）
+            static const char *pages[] = {"/", "/devices", "/rules", "/alerts", "/debug", "/filters"};
+            for (const char *pg : pages) {
+                if (r.path == pg && req.get_header_value("Accept").find("text/html") != std::string::npos) {
+                    res.status = 302;
+                    res.set_header("Location", p + (r.path == "/" ? std::string("/") : r.path));
+                    return httplib::Server::HandlerResponse::Handled;
+                }
+            }
             return httplib::Server::HandlerResponse::Unhandled;
         });
     }
@@ -457,6 +478,7 @@ void Server::setup_routes() {
         return [this, name](const httplib::Request &, httplib::Response & res) {
             std::string html = read_file(cfg_.static_dir + "/" + name + ".html");
             if (html.empty()) { res.status = 404; res.set_content("Not Found", "text/plain"); return; }
+            renamePlatform(html);   // 平台更名（模板共用，下发时改）
             // 调试捕获开启时给公共导航注入 /debug 入口（模板与 web_vllm_cpp 共用，源码不动）
             if (cfg_.debug_capture && name != "debug") injectDebugNavLink(html);
             // debug/filters 是 rknn 特有页、自带完整导航，不重复注入
