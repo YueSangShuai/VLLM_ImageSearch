@@ -56,9 +56,32 @@ int main(int argc, char **argv) {
         std::vector<int32_t> ids;
         std::vector<float> attn;
         txt.tokenize(queries[qi], ids, attn);
-        if (!std::equal(ids.begin(), ids.end(), ids_ref.begin() + (size_t)qi * SEQ)) tok_bad++;
+        if (!std::equal(ids.begin(), ids.end(), ids_ref.begin() + (size_t)qi * SEQ)) {
+            tok_bad++;
+            if (tok_bad <= 2) {  // 定位首个差异位置
+                const int32_t *ref = ids_ref.data() + (size_t)qi * SEQ;
+                int pos = 0;
+                while (pos < SEQ && ids[pos] == ref[pos]) pos++;
+                printf("    q%d 首个差异@%d cpp=%s ref=%s | 句: %.60s\n", qi, pos,
+                       (pos + 16 <= SEQ ? std::to_string(ids[pos]).c_str() : "?"),
+                       std::to_string(ref[pos]).c_str(), queries[qi].c_str());
+                fflush(stdout);
+            }
+        }
     }
     printf("[1] tokenizer ids 全等: %s (%d/%d 不符)\n", tok_bad ? "FAIL" : "PASS", tok_bad, M);
+
+    // debug: 绕过 tokenize，直接喂 golden ids/attn 看塔输出
+    {
+        auto attn_ref = read_raw<float>(raw + "/attn.raw", (size_t)M * SEQ);
+        auto e = txt.encode_raw(ids_ref.data(), attn_ref.data(), SEQ);
+        const float *t = t_emb.data();
+        printf("[dbg] emb[0..3]=%.4f %.4f %.4f %.4f | torch=%.4f %.4f %.4f %.4f\n",
+               e[0], e[1], e[2], e[3], t[0], t[1], t[2], t[3]);
+        double a = 0;
+        for (int k = 0; k < DIM; k++) a += e[k] * t[k];
+        printf("[dbg] encode_raw cos(q0) = %.5f\n", a);
+    }
 
     // 2) 文本塔向量
     double txt_min_cos = 1.0;

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <csignal>
@@ -16,8 +17,6 @@
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include "stb_image_resize2.h"
 
 std::string url_encode(const std::string &s) {
     // 对齐 urllib.parse.quote(safe='')：仅保留 alnum 与 _.-~
@@ -115,12 +114,60 @@ ImageRGB resize_bilinear(const ImageRGB &src, int nw, int nh) {
     dst.w = nw; dst.h = nh;
     dst.rgb.resize((size_t)nw * nh * 3);
     if (src.w == nw && src.h == nh) { dst.rgb = src.rgb; return dst; }
-    // stb_image_resize v2 的 medium API：STBIR_TYPE_UINT8 即线性色彩空间、无 alpha 加权，
-    // 等价于 v1 stbir_resize_uint8_generic(..., STBIR_NO_ALPHA, ..., STBIR_COLORSPACE_LINEAR, ...)
-    stbir_resize(src.rgb.data(), src.w, src.h, 0,
-                 dst.rgb.data(), nw, nh, 0,
-                 STBIR_RGB, STBIR_TYPE_UINT8,
-                 STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE);
+    // ⚠ OpenCV 4.12 8U INTER_LINEAR 的【逐字节】复刻（实测 13 种尺寸+真实 JPEG 全零差异）：
+    //   · 系数按 resize.cpp hal 路径：float32 fx=(dx+0.5)*scale-0.5 → 截断取 sx →
+    //     独立权重 round((1-fx)*2048) / round(fx*2048)（nearbyint=银行家舍入，勿用 lround）
+    //   · 横向精确 int32：S = p[sx]*a0 + p[sx+chan]*a1
+    //   · 纵向不是教科书 (S0*b0+S1*b1+2^21)>>22！是 VResizeLinearVec_32s8u 截断律：
+    //       ((S0>>4)*b0>>16) + ((S1>>4)*b1>>16) + 2 >> 2
+    //     （平均偏 -0.13/像素，是该版本固有偏置，是排序对齐的关键，勿“修正”）
+    //   · y 越界权重不置零（invoker clamp 行号、权重原样），仅 x 边界把 fx 清零
+    //   · 尾元素（宽*通道 % 32）走标量 (S0*b0+S1*b1+2^21)>>22；服务恒为 224*3=672 无尾
+    constexpr int S = 1 << 11;  // INTER_RESIZE_COEF_SCALE
+    const double scale_x = (double)src.w / nw, scale_y = (double)src.h / nh;
+    const int chan = 3;
+    std::vector<int> ix0(nw), a0(nw), a1(nw);
+    for (int x = 0; x < nw; x++) {
+        float fx = (float)((x + 0.5) * scale_x - 0.5);
+        int sx = (int)std::floor(fx);
+        fx -= (float)sx;
+        if (sx < 0)     { fx = 0.f; sx = 0; }
+        if (sx >= src.w - 1) { fx = 0.f; sx = src.w - 1; }
+        ix0[x] = sx;
+        a1[x] = (int)std::nearbyintf(fx * 2048.f);
+        a0[x] = (int)std::nearbyintf((1.f - fx) * 2048.f);
+    }
+    std::vector<int32_t> hb0((size_t)nw * chan), hb1((size_t)nw * chan);
+    for (int y = 0; y < nh; y++) {
+        float fy = (float)((y + 0.5) * scale_y - 0.5);
+        int sy = (int)std::floor(fy);
+        fy -= (float)sy;
+        int r0 = std::min(std::max(sy, 0), src.h - 1);
+        int r1 = std::min(std::max(sy + 1, 0), src.h - 1);
+        int b1 = (int)std::nearbyintf(fy * 2048.f);
+        int b0 = (int)std::nearbyintf((1.f - fy) * 2048.f);
+        const uint8_t *row0 = src.rgb.data() + (size_t)r0 * src.w * chan;
+        const uint8_t *row1 = src.rgb.data() + (size_t)r1 * src.w * chan;
+        for (int x = 0; x < nw; x++)
+            for (int c = 0; c < chan; c++) {
+                int i0 = ix0[x] * chan + c, i1 = i0 + chan;
+                hb0[x * chan + c] = (int32_t)row0[i0] * a0[x] + (int32_t)row0[i1] * a1[x];
+                hb1[x * chan + c] = (int32_t)row1[i0] * a0[x] + (int32_t)row1[i1] * a1[x];
+            }
+        uint8_t *out = dst.rgb.data() + (size_t)y * nw * chan;
+        int w = nw * chan, i = 0;
+        for (; i <= w - 16; i += 16) {  // 向量主体（32/16  lane 律相同）
+            for (int k = 0; k < 16; k++) {
+                int t0 = ((hb0[i + k] >> 4) * b0) >> 16;
+                int t1 = ((hb1[i + k] >> 4) * b1) >> 16;
+                out[i + k] = (uint8_t)((t0 + t1 + 2) >> 2);
+            }
+        }
+        for (; i < w; i++) {            // 标量尾：FixedPtCast
+            int64_t v = (int64_t)hb0[i] * b0 + (int64_t)hb1[i] * b1;
+            out[i] = (uint8_t)((v + ((int64_t)1 << 21)) >> 22);
+        }
+    }
     return dst;
 }
 

@@ -29,7 +29,7 @@ python3 scripts/golden/export_golden.py
 # 4. 交叉编译（复用 web_vllm_cpp 工具链 + web_vllm_rknn rknn 头库）
 bash cpp/build_scripts/build_aarch64.sh
 
-# 5. 部署（板子 pi@10.8.18.118，目录 /home/web_text2img_rknn，端口 5005）
+# 5. 部署（板子 pi@10.8.18.118，目录 /home/pi/web_text2img_rknn，端口 5005）
 bash scripts/deploy/push_board.sh          # 推 output/ 到板上 ~/web_text2img_rknn/
 bash scripts/deploy/start_svc_board.sh     # 板上纯净重启（经 ssh）
 # （start_svc_board.sh 需在板上执行：先 push 再 python3 scripts/deploy/ssh_pi.py 30 'bash ~/web_text2img_rknn/../start_svc_board.sh' 或手动 nohup）

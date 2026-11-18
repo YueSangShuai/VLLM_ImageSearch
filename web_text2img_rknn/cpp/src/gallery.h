@@ -3,6 +3,7 @@
 // data/gallery/vectors.bin（float32 追加写）+ manifest.json（文件→向量偏移），
 // 删除的文件打 alive=false 墓碑（避免频繁重写），/api/rebuild 或启动时全量整理。
 // 板端 10 万张全量编码约 2h，启动时后台增量、服务不等建库完成。
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -33,8 +34,10 @@ public:
     // topk 检索：q（已归一化）× 全库点积。锁内拷贝结果快照，返回 (相对路径, 分数) 降序。
     std::vector<std::pair<std::string, float>> search(const std::vector<float> &q, int topk) const;
 
-    int size() const { int n = 0; for (auto &e : entries_) if (e.alive) n++; return n; }
-    int total() const { return (int)entries_.size(); }
+    // size/total 内部加锁：建库线程随时 append entries_，HTTP 线程裸读会撞扩容
+    int size() const { std::lock_guard<std::mutex> lk(mu_);
+                       int n = 0; for (auto &e : entries_) if (e.alive) n++; return n; }
+    int total() const { std::lock_guard<std::mutex> lk(mu_); return (int)entries_.size(); }
     int dim() const { return dim_; }
 
 private:
@@ -42,7 +45,7 @@ private:
     void save_cache();
 
     std::string dir_, cache_dir_;
-    int dim_ = 0;
+    std::atomic<int> dim_{0};
     std::vector<GalleryEntry> entries_;
     std::vector<float> vecs_;                 // 展平 N×dim（append-only）
     mutable std::mutex mu_;

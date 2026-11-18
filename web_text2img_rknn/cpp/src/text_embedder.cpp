@@ -179,8 +179,10 @@ TextEmbedder::TextEmbedder(const std::string &rknn_path, const std::string &voca
     out_attr_.index = 0;
     rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attr_, sizeof(out_attr_));
     dim_ = (int)out_attr_.n_elems;
-    fprintf(stderr, "MARS text rknn: ids type=%d mask type=%d out dim=%d\n",
-            (int)in_ids_attr_.type, (int)in_mask_attr_.type, dim_);
+    fprintf(stderr, "MARS text rknn: in0=[%s] type=%d dims=[%d,%d] in1=[%s] type=%d out dim=%d\n",
+            in_ids_attr_.name, (int)in_ids_attr_.type,
+            in_ids_attr_.dims[0], in_ids_attr_.dims[1],
+            in_mask_attr_.name, (int)in_mask_attr_.type, dim_);
 }
 
 TextEmbedder::~TextEmbedder() {
@@ -243,10 +245,11 @@ void TextEmbedder::tokenize(const std::string &cleaned, std::vector<int32_t> &id
         else word += ch;
     }
 
-    // 4. 特殊符 + 定长 pad
-    if ((int)ids.size() > max_len_ - 2) ids.resize(max_len_ - 2);
+    // 4. 特殊符 + 定长 pad。
+    // ⚠ MARS 定制点：tokenization_bert.py:271 单序列只加 [CLS]、**不加 [SEP]**
+    //（原版 HF 的 +sep 被注释掉）。截断按总长 max_len（HF truncation 语义，无 SEP 占位）。
+    if ((int)ids.size() > max_len_ - 1) ids.resize(max_len_ - 1);
     ids.insert(ids.begin(), cls_id_);
-    ids.push_back(sep_id_);
     ids.resize(max_len_, pad_id_);
     attn.assign(max_len_, 0.0f);
     for (int i = 0; i < max_len_; i++) attn[i] = (ids[i] != pad_id_) ? 1.0f : 0.0f;
@@ -257,24 +260,34 @@ std::vector<float> TextEmbedder::encode(const std::string &text) {
 }
 
 std::vector<float> TextEmbedder::encode_clean(const std::string &cleaned) {
-    std::lock_guard<std::mutex> lk(mu_);
     std::vector<int32_t> ids;
     std::vector<float> attn;
     tokenize(cleaned, ids, attn);
+    return encode_raw(ids.data(), attn.data(), max_len_);
+}
+
+std::vector<float> TextEmbedder::encode_raw(const int32_t *ids, const float *attn, int seq) {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::vector<int32_t> ids_buf(ids, ids + seq);
+    std::vector<float> attn_buf(attn, attn + seq);
 
     rknn_input ins[2] = {};
+    // ⚠ fp16 模型里 attention_mask 的图输入类型被转成了 FLOAT16（rknn type enum: 1=FP16
+    // 而非 FLOAT32），pass_through=1 直灌 float32 会被按 fp16 解析成乱码。
+    // pass_through=0 让 runtime 按声明的 float32 自动转换（python 模拟器 API 同理自动转，
+    // 所以 x86 模拟器对拍过而板端错）。
     ins[0].index = 0;
     ins[0].type = (rknn_tensor_type)in_ids_attr_.type;   // INT32（导出时 ids 为 int32）
     ins[0].fmt = RKNN_TENSOR_UNDEFINED;
     ins[0].size = (uint32_t)(max_len_ * sizeof(int32_t));
-    ins[0].pass_through = 1;
-    ins[0].buf = ids.data();
+    ins[0].pass_through = 0;
+    ins[0].buf = ids_buf.data();
     ins[1].index = 1;
     ins[1].type = RKNN_TENSOR_FLOAT32;
     ins[1].fmt = RKNN_TENSOR_UNDEFINED;
     ins[1].size = (uint32_t)(max_len_ * sizeof(float));
-    ins[1].pass_through = 1;
-    ins[1].buf = attn.data();
+    ins[1].pass_through = 0;
+    ins[1].buf = attn_buf.data();
     int ret = rknn_inputs_set(ctx_, 2, ins);
     if (ret < 0) throw std::runtime_error("text rknn_inputs_set 失败 ret=" + std::to_string(ret));
     ret = rknn_run(ctx_, nullptr);

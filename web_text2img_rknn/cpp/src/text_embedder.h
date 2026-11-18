@@ -22,6 +22,8 @@ public:
     std::vector<float> encode(const std::string &text);
     // 已清洗文本直接编码（golden 对拍用）
     std::vector<float> encode_clean(const std::string &cleaned);
+    // 直接喂定长 ids/attn（排障：绕过 tokenize）
+    std::vector<float> encode_raw(const int32_t *ids, const float *attn, int seq);
     int dim() const { return dim_; }
 
     // HF BertTokenizer 口径校验用（golden_check 对比 x86 tokenizers 输出）

@@ -49,7 +49,7 @@ void Gallery::load_cache() {
     vf.seekg(0, std::ios::beg);
     vecs_.resize(bytes / sizeof(float));
     vf.read((char *)vecs_.data(), (std::streamsize)bytes);
-    fprintf(stderr, "gallery 缓存加载: %zu 条 dim=%d\n", entries_.size(), dim_);
+    fprintf(stderr, "gallery 缓存加载: %zu 条 dim=%d\n", entries_.size(), dim_.load());
 }
 
 void Gallery::save_cache() {
@@ -58,7 +58,7 @@ void Gallery::save_cache() {
     for (auto &e : entries_)
         entries.push_back({{"file", e.file}, {"mtime", e.mtime}, {"off", e.off},
                            {"alive", e.alive}});
-    json j = {{"dim", dim_}, {"entries", entries}};
+    json j = {{"dim", dim_.load()}, {"entries", entries}};
     std::ofstream(cache_dir_ + "/manifest.json") << j.dump(1);
     std::ofstream vf(cache_dir_ + "/vectors.bin", std::ios::binary);
     vf.write((const char *)vecs_.data(), (std::streamsize)(vecs_.size() * sizeof(float)));
@@ -111,7 +111,7 @@ void Gallery::sync(const EncodeFn &encode, const std::function<void(int, int)> &
             std::lock_guard<std::mutex> lk(mu_);
             if (dim_ == 0) dim_ = (int)emb.size();
             if ((int)emb.size() != dim_) {
-                fprintf(stderr, "  维度不符 %s: %zu vs %d\n", item.file.c_str(), emb.size(), dim_);
+                fprintf(stderr, "  维度不符 %s: %zu vs %d\n", item.file.c_str(), emb.size(), dim_.load());
                 continue;
             }
             GalleryEntry g;
@@ -121,14 +121,19 @@ void Gallery::sync(const EncodeFn &encode, const std::function<void(int, int)> &
             vecs_.insert(vecs_.end(), emb.begin(), emb.end());
             entries_.push_back(std::move(g));
         }
-        if (progress) progress(++done, n_total);
-        else if (done % 50 == 0 || done == n_total) {
+        ++done;
+        if (progress) progress(done, n_total);
+        else if (done % 50 == 0) {
             fprintf(stderr, "  gallery %d/%d\n", done, n_total);
+            std::lock_guard<std::mutex> lk(mu_);
             save_cache();   // 定期落盘，中断可续
         }
     }
-    if (n_total > 0) save_cache();
-    fprintf(stderr, "gallery 就绪: alive=%d 总数=%d dim=%d\n", size(), total(), dim_);
+    if (n_total > 0) {
+        std::lock_guard<std::mutex> lk(mu_);
+        save_cache();
+    }
+    fprintf(stderr, "gallery 就绪: alive=%d 总数=%d dim=%d\n", size(), total(), dim_.load());
 }
 
 int Gallery::add(const std::string &abs_path, const std::vector<float> &emb) {
