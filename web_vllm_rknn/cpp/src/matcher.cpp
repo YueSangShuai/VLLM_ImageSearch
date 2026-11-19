@@ -1,5 +1,6 @@
 #include "matcher.h"
 #include "attributes.h"
+#include "reranker.h"
 #include "text_embedder.h"
 #include "util.h"
 #include "vlm_describer.h"
@@ -51,8 +52,9 @@ static std::string getStr(const json & j, const char * key, const std::string & 
 
 // ==================== Matcher ====================
 
-Matcher::Matcher(VlmDescriber * describer, TextEmbedder * embedder, const Config & cfg)
-    : vlm_(describer), emb_(embedder), cfg_(cfg) {
+Matcher::Matcher(VlmDescriber * describer, TextEmbedder * embedder, Reranker * reranker,
+                 const Config & cfg)
+    : vlm_(describer), emb_(embedder), reranker_(reranker), cfg_(cfg) {
     mode_ = cfg.match_mode;
     base_prompt_ = cfg.description_prompt;
     vlm_max_ = cfg.vlm_max_new_tokens;
@@ -543,9 +545,26 @@ json Matcher::match(const ImageRGB & image) {
         bool passed = best_positive_score >= threshold &&
                       best_positive_score > max_negative_score + score_diff;
 
-        // 调试明细入表：状态区分 命中/低于阈值/被负样本压制/低于score_diff/冷却中
+        // ===== 二次核验（Qwen3-Reranker）：BGE 达标的语义规则再核一道 =====
+        // 启用条件：Reranker 可用 && 规则字段 rerank_threshold>0（未设/0=关闭，存量规则零变化）
+        // && 语义规则（符号规则不走 BGE、也不核验）。冷却中照跑（would_hit 须反映核验结果）但不触发。
+        // query=最高分正样本文本，document=本帧 VLM 描述。P<0（rkllm 失败）放行：
+        // 核验故障不阻断告警链路。耗时 ~231ms/次，只有 BGE 过关的规则才会调用，成本有界。
+        double rerank_thr = ruleNumber(rule, "rerank_threshold", 0);
+        bool rerank_checked = false;
+        double rerank_p = -1.0;
+        if (rerank_thr > 0) d["rerank_threshold"] = round4(rerank_thr);
+        if (reranker_ && reranker_->ok() && rerank_thr > 0 && !symbolic && passed) {
+            rerank_p = reranker_->rerank(best_positive_text, description);
+            rerank_checked = true;
+            d["rerank_score"] = rerank_p >= 0 ? json(round4(rerank_p)) : json();
+            if (rerank_p >= 0 && rerank_p < rerank_thr) passed = false;
+        }
+        bool rerank_blocked = rerank_checked && rerank_p >= 0 && rerank_p < rerank_thr;
+
+        // 调试明细入表：状态区分 命中/低于阈值/被负样本压制/低于score_diff/核验未过/冷却中
         d["score"] = round4(best_positive_score);
-        bool neg_blocked = !passed && best_positive_score >= threshold &&
+        bool neg_blocked = !passed && !rerank_blocked && best_positive_score >= threshold &&
                            max_negative_score > 0 &&
                            best_positive_score <= max_negative_score + score_diff;
         if (in_cooldown) {
@@ -554,6 +573,8 @@ json Matcher::match(const ImageRGB & image) {
         } else if (passed) {
             d["status"] = "hit";
             d["hit"] = true;
+        } else if (rerank_blocked) {
+            d["status"] = "rerank_rejected";
         } else if (neg_blocked) {
             d["status"] = "negative_higher";
         } else {
@@ -592,6 +613,10 @@ json Matcher::match(const ImageRGB & image) {
         m["negative_higher"] = max_negative_score >= threshold &&
                                max_negative_score >= best_positive_score;
         m["final_score"] = round4(best_positive_score);
+        if (rerank_checked) {   // 命中的规则也带上核验分，告警/检测日志可追溯
+            m["rerank_score"] = rerank_p >= 0 ? json(round4(rerank_p)) : json();
+            m["rerank_threshold"] = round4(rerank_thr);
+        }
         m["description"] = description;
         m["base_description"] = description;
         m["description_zh"] = dr.zh;

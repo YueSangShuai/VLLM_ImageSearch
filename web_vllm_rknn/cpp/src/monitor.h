@@ -3,6 +3,7 @@
 #include "detector.h"
 #include "json_store.h"
 #include "matcher.h"
+#include "reranker.h"
 #include "stream_processor.h"
 #include "text_embedder.h"
 #include "vlm_describer.h"
@@ -38,6 +39,8 @@ private:
     std::unique_ptr<Detector> detector_;
     std::unique_ptr<VlmDescriber> describer_;
     std::unique_ptr<TextEmbedder> embedder_;
+    // 二次核验全局单例（与 describer_/embedder_ 并列）。RERANKER_MODEL_PATH 空=不构造
+    std::unique_ptr<Reranker> reranker_;
 
     json devices_ = json::array();          // devices.json 快照（DeviceManager.load_devices）
     json tasks_ = json::array();

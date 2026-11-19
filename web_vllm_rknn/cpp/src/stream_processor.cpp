@@ -421,6 +421,13 @@ void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & fra
             std::string item = d.value("rule_name", "?") + "(" +
                                format_double(d.value("score", 0.0)) + "/" +
                                format_double(d.value("threshold", 0.5)) + "阈)";
+            // 开过二次核验的规则：附 核验P/核验阈（失败=null 显示「核验故障」，已按放行处理）
+            if (d.contains("rerank_threshold")) {
+                bool has_p = d.contains("rerank_score") && !d["rerank_score"].is_null();
+                item += "[核验" +
+                        (has_p ? format_double(d["rerank_score"].get<double>()) : std::string("故障")) +
+                        "/" + format_double(d.value("rerank_threshold", 0.5)) + "]";
+            }
             if (d.value("type", "") == "symbolic") {
                 auto missing = d.contains("missing_attrs") ? d["missing_attrs"] : json::array();
                 if (!missing.empty()) {
@@ -433,7 +440,8 @@ void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & fra
             if (st == "hit") hit_s += (hit_s.empty() ? "" : " ") + item;
             else miss_s += (miss_s.empty() ? "" : " ") + item +
                            (st == "cooldown" ? "(冷却)" : st == "no_embedding" ? "(无向量)" :
-                            st == "orientation" ? "(朝向不符)" : "");
+                            st == "orientation" ? "(朝向不符)" :
+                            st == "rerank_rejected" ? "(核验未过)" : "");
         }
         printf("[%s] 🐞 匹配明细 | 命中: %s | 未命中: %s\n",
                sanitize_name(getStr(device, "name", "Unknown")).c_str(),
@@ -580,6 +588,10 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
         log_entry["attributes"] = match.contains("attributes") ? match["attributes"] : json::array();
         log_entry["score"] = match.value("final_score", 0.0);
         log_entry["negative_higher"] = match.value("negative_higher", false);
+        if (match.contains("rerank_score")) {   // 二次核验：命中的告警也留核验分可追溯
+            log_entry["rerank_score"] = match["rerank_score"];
+            log_entry["rerank_threshold"] = match.value("rerank_threshold", 0.0);
+        }
         log_entry["image"] = rel_roi;
         log_entry["original_image"] = rel_orig;
         log_entry["bbox"] = bbox;
@@ -603,6 +615,10 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
         alert["attributes"] = match.contains("attributes") ? match["attributes"] : json::array();
         alert["score"] = match.value("final_score", 0.0);
         alert["negative_higher"] = match.value("negative_higher", false);
+        if (match.contains("rerank_score")) {
+            alert["rerank_score"] = match["rerank_score"];
+            alert["rerank_threshold"] = match.value("rerank_threshold", 0.0);
+        }
         alert["timestamp"] = timestamp;
         alert["image"] = rel_roi;
         alert["original_image"] = rel_orig;

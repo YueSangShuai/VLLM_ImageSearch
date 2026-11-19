@@ -214,8 +214,9 @@
         }
 
         const STATUS_LABEL = {
-            hit: '命中', below_threshold: '未达阈', below_score_diff: '低于diff',
+            hit: '命中', below_threshold: 'BGE未达阈', below_score_diff: '低于diff',
             cooldown: '冷却', no_embedding: '无向量', orientation: '朝向不符',
+            rerank_rejected: '核验未过',
         };
 
         // 逐规则得分明细：未命中规则也显示分数/阈值，符号规则附缺失属性
@@ -229,6 +230,16 @@
                 const thr = (d.threshold == null) ? '' :
                     `<span class="thr">/${(d.threshold * 100).toFixed(1)}%</span>`;
                 const cool = (d.status === 'cooldown' && d.would_hit) ? '<span class="thr">(本可命中)</span>' : '';
+                // 开启二次核验的规则：初筛(BGE) 分数/阈值 + 核验(Reranker) P/阈值 并排；
+                // 核验故障（score=null）已按放行处理，标橙色提醒
+                let rerank = '';
+                if (d.rerank_threshold != null) {
+                    const rt = `<span class="thr">/${(d.rerank_threshold * 100).toFixed(1)}%</span>`;
+                    const pv = d.rerank_score == null
+                        ? '<span style="color:#b45309;" title="核验调用失败，已放行">故障</span>'
+                        : `<span class="score">${(d.rerank_score * 100).toFixed(1)}%</span>`;
+                    rerank = ` <span class="thr" style="margin-left:6px;">核验</span>${pv}${rt}`;
+                }
                 let extra = '';
                 if (d.type === 'symbolic') {
                     const miss = d.missing_attrs || [];
@@ -242,7 +253,7 @@
                     extra = `<div style="margin-left:1rem;">${rows}</div>`;
                 }
                 return `<div class="rule-line"><span class="hit-badge ${cls}">${STATUS_LABEL[d.status] || esc(d.status)}</span> ` +
-                       `${esc(d.rule_name)} <span class="score">${score}</span>${thr}${cool}${extra}</div>`;
+                       `${esc(d.rule_name)} <span class="score">${score}</span>${thr}${rerank}${cool}${extra}</div>`;
             }).join('');
         }
 

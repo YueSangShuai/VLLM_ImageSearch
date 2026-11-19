@@ -43,6 +43,7 @@ add_executable(web_vllm_rknn
     src/rknn_image_enc.cc
     src/vlm_describer.cpp
     src/attr_head.cpp
+    src/reranker.cpp
     src/matcher.cpp
     src/stream_processor.cpp
     src/monitor.cpp

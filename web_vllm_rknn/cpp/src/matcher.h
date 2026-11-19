@@ -14,10 +14,14 @@
 
 class VlmDescriber;
 class TextEmbedder;
+class Reranker;
 
 class Matcher {
 public:
-    Matcher(VlmDescriber * describer, TextEmbedder * embedder, const Config & cfg);
+    // reranker 可为 nullptr（功能禁用）：二次核验仅对 BGE 达标的语义规则、
+    // 且规则字段 rerank_threshold>0 时执行；核验失败（P<0）一律放行
+    Matcher(VlmDescriber * describer, TextEmbedder * embedder, Reranker * reranker,
+            const Config & cfg);
 
     // rules：tasks.json 按 device 合并后的规则数组（monitor 负责合并）
     void updateRules(const json & rules);
@@ -31,7 +35,8 @@ public:
 
     // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
     // match() 期间生成的描述快照：{description, description_zh, attributes,
-    // rules(逐规则得分明细：name/type/score/threshold/status/hit，symbolic 附带
+    // rules(逐规则得分明细：name/type/score/threshold/status/hit（开启二次核验的规则附
+    // rerank_score/rerank_threshold，status 可为 rerank_rejected），symbolic 附带
     // expected/hit_attrs/missing_attrs，semantic 附带 positive_list/positive_scores)}
     json lastDebugSnapshot();
     // 未走 match 描述路径（无规则等）时补一次描述生成，供调试页展示
@@ -63,6 +68,7 @@ private:
 
     VlmDescriber * vlm_;
     TextEmbedder * emb_;
+    Reranker * reranker_;      // 可空：二次核验禁用
     Config cfg_;
 
     std::string mode_;

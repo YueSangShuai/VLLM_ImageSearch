@@ -39,6 +39,12 @@ struct Config {
     // 置空 = 对称编码（旧行为）。加前缀会整体抬升/移动分数，需重校 threshold。
     std::string embed_query_prefix;
 
+    // 二次核验（Qwen3-Reranker-0.6B w8a8，RKLLM NPU 第二实例）：
+    // BGE 初筛达标的语义规则，再用 P(描述符合规则) 与规则字段 rerank_threshold 比对。
+    // RERANKER_MODEL_PATH 空=整个功能禁用（代码默认）；"off" 显式禁用；板端由 run 脚本指路径开启。
+    std::string reranker_model_path;
+    double reranker_default_threshold = 0.5;    // RERANKER_DEFAULT_THRESHOLD：展示/兜底值，生效以规则字段为准
+
     // 调试捕获：VLM_DEBUG_CAPTURE=1 时，所有检测到的行人（无论是否命中规则）
     // 都存图 + 描述进 data/debug_log.jsonl（追加写），web /debug 页查看。默认关闭。
     bool debug_capture = false;

@@ -116,6 +116,12 @@ Config Config::load() {
     // BGE 官方检索用法：query 侧加指令前缀，doc 侧不加（非对称）。置空回到对称。
     c.embed_query_prefix = getenv_str("BGE_QUERY_PREFIX", "为这个句子生成表示以用于检索相关文章：");
 
+    // 二次核验（Qwen3-Reranker）：默认禁用（空路径），板端 run_web_rk.sh 指模型开启；
+    // "off" 显式禁用（getenv_str 把空串当未设置，与 attr_head 同款哨兵惯例）
+    c.reranker_model_path = getenv_str("RERANKER_MODEL_PATH", "");
+    if (c.reranker_model_path == "off") c.reranker_model_path.clear();
+    c.reranker_default_threshold = getenv_double("RERANKER_DEFAULT_THRESHOLD", 0.5);
+
     // 调试捕获开关（web /debug 页）；默认关闭。上限 VLM_DEBUG_LOG_MAX 默认 0=不限
     c.debug_capture = getenv_bool("VLM_DEBUG_CAPTURE", false);
     c.debug_log_max = (int)getenv_int("VLM_DEBUG_LOG_MAX", 0);

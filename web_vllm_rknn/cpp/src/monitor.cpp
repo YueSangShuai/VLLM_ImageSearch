@@ -20,6 +20,14 @@ Monitor::Monitor(const Config & cfg) : cfg_(cfg) {
 
     printf("加载BGE文本向量模型: %s\n", cfg.bge_onnx_path.c_str());
     embedder_.reset(new TextEmbedder(cfg.bge_onnx_path, cfg.bge_vocab_path, cfg.bge_max_length));
+
+    // 二次核验（可选件）：路径为空=整个功能禁用；init 失败 Reranker 自带降级（ok()=false，核验一律放行）
+    if (!cfg.reranker_model_path.empty()) {
+        printf("加载Qwen3-Reranker二次核验模型: %s\n", cfg.reranker_model_path.c_str());
+        reranker_.reset(new Reranker(cfg.reranker_model_path, cfg.reranker_default_threshold));
+    } else {
+        printf("二次核验未启用（RERANKER_MODEL_PATH 未设置）\n");
+    }
 }
 
 Monitor::~Monitor() {
@@ -69,7 +77,7 @@ void Monitor::startDevice(const std::string & device_id) {
     printf("[%s] 加载了 %zu 条规则\n", name.c_str(), device_rules.size());
 
     auto runner = std::make_shared<Runner>();
-    runner->matcher = std::make_unique<Matcher>(describer_.get(), embedder_.get(), cfg_);
+    runner->matcher = std::make_unique<Matcher>(describer_.get(), embedder_.get(), reranker_.get(), cfg_);
     runner->matcher->updateRules(device_rules);
     runner->proc = std::make_unique<StreamProcessor>(device, detector_.get(), runner->matcher.get(),
                                                      cfg_.debug_capture);
