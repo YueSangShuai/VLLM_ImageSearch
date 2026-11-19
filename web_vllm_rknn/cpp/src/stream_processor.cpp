@@ -560,10 +560,9 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
             f.write((const char *)jpg.data(), (std::streamsize)jpg.size());
         }
 
-        printf("🚨 告警: %s 正样本分数: %s 负样本分数: %s\n",
+        printf("🚨 告警: %s 正样本分数: %s\n",
                match.value("rule_name", "").c_str(),
-               format_double(match.value("final_score", 0.0)).c_str(),
-               match.contains("negative_scores") ? match["negative_scores"].dump().c_str() : "[]");
+               format_double(match.value("final_score", 0.0)).c_str());
 
         std::string rel_roi = today + "/" + safe_device_name + "/" + safe_rule_name + "/roi/" + img_filename;
         std::string rel_orig = today + "/" + safe_device_name + "/" + safe_rule_name + "/original/" + img_filename;
@@ -579,15 +578,12 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
         log_entry["rule_name"] = match.value("rule_name", "");
         log_entry["positive"] = match.value("positive", "");
         log_entry["positive_list"] = match.contains("positive_list") ? match["positive_list"] : json::array();
-        log_entry["negative_list"] = match.contains("negative_list") ? match["negative_list"] : json::array();
         log_entry["positive_scores"] = match.contains("positive_scores") ? match["positive_scores"] : json::array();
-        log_entry["negative_scores"] = match.contains("negative_scores") ? match["negative_scores"] : json::array();
         log_entry["description"] = match.value("description", "");
         log_entry["base_description"] = match.value("base_description", "");
         log_entry["description_zh"] = match.value("description_zh", "");
         log_entry["attributes"] = match.contains("attributes") ? match["attributes"] : json::array();
         log_entry["score"] = match.value("final_score", 0.0);
-        log_entry["negative_higher"] = match.value("negative_higher", false);
         if (match.contains("rerank_score")) {   // 二次核验：命中的告警也留核验分可追溯
             log_entry["rerank_score"] = match["rerank_score"];
             log_entry["rerank_threshold"] = match.value("rerank_threshold", 0.0);
@@ -606,15 +602,12 @@ void StreamProcessor::processDetection(const Detection & det, const ImageRGB & f
         alert["rule_name"] = match.value("rule_name", "");
         alert["positive"] = match.value("positive", "");
         alert["positive_list"] = match.contains("positive_list") ? match["positive_list"] : json::array();
-        alert["negative_list"] = match.contains("negative_list") ? match["negative_list"] : json::array();
         alert["positive_scores"] = match.contains("positive_scores") ? match["positive_scores"] : json::array();
-        alert["negative_scores"] = match.contains("negative_scores") ? match["negative_scores"] : json::array();
         alert["description"] = match.value("description", "");
         alert["base_description"] = match.value("base_description", "");
         alert["description_zh"] = match.value("description_zh", "");
         alert["attributes"] = match.contains("attributes") ? match["attributes"] : json::array();
         alert["score"] = match.value("final_score", 0.0);
-        alert["negative_higher"] = match.value("negative_higher", false);
         if (match.contains("rerank_score")) {
             alert["rerank_score"] = match["rerank_score"];
             alert["rerank_threshold"] = match.value("rerank_threshold", 0.0);

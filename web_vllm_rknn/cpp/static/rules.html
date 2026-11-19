@@ -264,13 +264,7 @@
                 <div class="form-group">
                     <label>正样本文本（每行一个，任一匹配即触发）</label>
                     <textarea id="rulePositive" required rows="3" placeholder="A man wearing black clothes&#10;Boy in dark clothes"></textarea>
-                    <small>每行一个正样本，与任一正样本匹配且分数高于负样本则触发</small>
-                </div>
-
-                <div class="form-group">
-                    <label>负样本文本（每行一个，容易误判的内容）</label>
-                    <textarea id="ruleNegative" rows="4" placeholder="A woman&#10;Someone with hat&#10;Child"></textarea>
-                    <small>每行一个负样本，用于排除误判</small>
+                    <small>每行一个正样本，与任一正样本匹配且分数超过阈值则触发</small>
                 </div>
 
                 <div class="form-group">
@@ -299,12 +293,6 @@
                     <label>触发间隔（秒）</label>
                     <input type="number" id="ruleInterval" min="1" max="3600" value="60" required>
                     <small>同一条规则触发后，需要间隔多少秒才能再次触发</small>
-                </div>
-
-                <div class="form-group">
-                    <label>分数差值阈值</label>
-                    <input type="number" id="ruleScoreDiff" min="0" max="1" step="0.01" value="0" placeholder="0">
-                    <small>正样本最高分必须比负样本最高分高多少才触发（0表示不限制）</small>
                 </div>
 
                 <div class="form-group">
@@ -491,7 +479,6 @@
                 const positiveDisplay = positiveList.slice(0, 2).join(' / ');
                 const moreCount = positiveList.length > 2 ? ` (+${positiveList.length - 2}个)` : '';
                 const isEnabled = r.enabled !== false;
-                const scoreDiff = r.score_diff || 0;
                 const rerankThr = parseFloat(r.rerank_threshold) || 0;
                 return `
                 <div class="rule-card ${isEnabled ? '' : 'disabled'}">
@@ -499,7 +486,7 @@
                         <div>
                             <strong>${r.name}</strong>
                             <div style="font-size: 0.9rem;">"${positiveDisplay}${moreCount}"</div>
-                            <div style="font-size: 0.85rem; color: #6c757d;">BGE阈值: ${r.threshold}${rerankThr > 0 ? ` | 核验阈值: ${rerankThr}` : ' | 核验: 关'} | 间隔: ${r.interval || 60}秒${scoreDiff > 0 ? ` | 分数差: ${scoreDiff}` : ''}</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">BGE阈值: ${r.threshold}${rerankThr > 0 ? ` | 核验阈值: ${rerankThr}` : ' | 核验: 关'} | 间隔: ${r.interval || 60}秒</div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 0.5rem;">
                             <label class="toggle-switch" title="${isEnabled ? '点击禁用' : '点击启用'}">
@@ -548,14 +535,12 @@
             document.getElementById('ruleId').value = rule.id;
             document.getElementById('ruleName').value = rule.name;
             document.getElementById('rulePositive').value = (rule.positive || rule.text || ['']).join('\n');
-            document.getElementById('ruleNegative').value = (rule.negative || []).join('\n');
             document.getElementById('ruleThreshold').value = rule.threshold;
             document.getElementById('ruleThresholdRange').value = rule.threshold * 100;
             const rerankThr = parseFloat(rule.rerank_threshold) || 0;
             document.getElementById('ruleRerankThreshold').value = rerankThr;
             document.getElementById('ruleRerankThresholdRange').value = rerankThr * 100;
             document.getElementById('ruleInterval').value = rule.interval || 60;
-            document.getElementById('ruleScoreDiff').value = rule.score_diff || 0;
             document.getElementById('ruleEnabled').checked = rule.enabled !== false;
             updateToggleLabel();
             document.getElementById('ruleModal').style.display = 'flex';
@@ -619,19 +604,15 @@
             e.preventDefault();
 
             const positiveText = document.getElementById('rulePositive').value;
-            const negativeText = document.getElementById('ruleNegative').value;
             const positiveList = positiveText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-            const negativeList = negativeText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
 
             const rule = {
                 id: editingRuleId || 'rule_' + Date.now(),
                 name: document.getElementById('ruleName').value,
                 positive: positiveList,
-                negative: negativeList,
                 threshold: parseFloat(document.getElementById('ruleThreshold').value),
                 rerank_threshold: parseFloat(document.getElementById('ruleRerankThreshold').value) || 0,
                 interval: parseInt(document.getElementById('ruleInterval').value) || 60,
-                score_diff: parseFloat(document.getElementById('ruleScoreDiff').value) || 0,
                 enabled: document.getElementById('ruleEnabled').checked
             };
 

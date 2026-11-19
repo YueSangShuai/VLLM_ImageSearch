@@ -78,11 +78,8 @@ private:
 
     std::vector<json> rules_;
     std::map<std::string, EmbMat> rule_emb_;
-    std::map<std::string, EmbMat> neg_emb_;          // 负样本文本向量：pos 须超过 max(neg)+score_diff 才告警
     std::map<std::string, std::vector<std::string>> pos_texts_;
-    std::map<std::string, std::vector<std::string>> neg_texts_;
     std::map<std::string, std::optional<std::set<std::string>>> attr_pos_;  // nullopt=需语义匹配
-    std::map<std::string, std::set<std::string>> attr_neg_;   // 符号规则：负样本属性（检出任一 → neg=1.0）
     std::map<std::string, double> last_trigger_;
     // 本次 match() 触发前的 last_trigger_ 旧值（-1=原本无记录），供 undoTrigger 回滚；
     // match() 开头清空。仅设备线程触碰（match/undoTrigger 同线程），锁内读写即可

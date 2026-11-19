@@ -243,14 +243,14 @@ static bool ruleBool(const json & r, const char * key, bool def) {
 }
 
 void Matcher::updateRules(const json & rules) {
-    // update_rules：只保留 enabled 规则；预计算正/负向量与属性解析。
+    // update_rules：只保留 enabled 规则；预计算正样本向量与属性解析。
     // 卡顿治理两条（2026-11-05）：
     //   ① vec_cache_ 文本→向量缓存：只有新文本才进 BGE（调阈值/改名/开关 = 零编码，微秒级）；
     //   ② 编码在 mu_ 锁外进行——match() 持 mu_ 跨整个 VLM 描述（可达数秒），旧版整表
     //      重编码挤在锁内，HTTP 保存规则要等“当前帧描述完 + 全部编码”=整站等。
     struct RuleTexts {
         std::string id;
-        std::vector<std::string> pos, neg;
+        std::vector<std::string> pos;
     };
     std::vector<json> new_rules;
     std::vector<RuleTexts> rts;
@@ -264,9 +264,7 @@ void Matcher::updateRules(const json & rules) {
             json pos_json = rule.contains("positive") ? rule["positive"] : json();
             rt.pos = normalizeTexts(pos_json);
             if (rt.pos.empty()) rt.pos = normalizeTexts(json::array({getStr(rule, "text")}));
-            rt.neg = normalizeTexts(rule.contains("negative") ? rule["negative"] : json());
             for (const auto & t : rt.pos) want.insert(t);
-            for (const auto & t : rt.neg) want.insert(t);
             new_rules.push_back(rule);
             rts.push_back(std::move(rt));
         }
@@ -298,9 +296,6 @@ void Matcher::updateRules(const json & rules) {
         rule_emb_.clear();
         pos_texts_.clear();
         attr_pos_.clear();
-        neg_emb_.clear();
-        neg_texts_.clear();
-        attr_neg_.clear();
 
         for (const auto & rt : rts) {
             const std::string & id = rt.id;
@@ -315,17 +310,6 @@ void Matcher::updateRules(const json & rules) {
             }
             rule_emb_[id] = std::move(m);
 
-            // 负样本：与正样本同口径（query 前缀），打分时 pos 须 > max(neg)+score_diff 才告警
-            neg_texts_[id] = rt.neg;
-            EmbMat nm;
-            for (const auto & t : rt.neg) {
-                auto it = vec_cache_.find(t);
-                if (it == vec_cache_.end()) continue;
-                nm.v.insert(nm.v.end(), it->second.begin(), it->second.end());
-                nm.n++;
-            }
-            neg_emb_[id] = std::move(nm);
-
             if (mode_ == "combined") {
                 std::optional<std::set<std::string>> merged = std::set<std::string>();
                 bool ok = !rt.pos.empty();
@@ -335,14 +319,6 @@ void Matcher::updateRules(const json & rules) {
                     merged->insert(parsed->begin(), parsed->end());
                 }
                 attr_pos_[id] = ok ? merged : std::optional<std::set<std::string>>{};
-
-                // 符号规则负样本：能解析出的属性并集；本帧检出任一 → max_negative=1.0 压掉告警
-                std::set<std::string> neg_attrs;
-                for (const auto & t : rt.neg) {
-                    auto parsed = parseRuleAttributes(t);
-                    if (parsed) neg_attrs.insert(parsed->begin(), parsed->end());
-                }
-                attr_neg_[id] = neg_attrs;
             }
         }
 
@@ -461,14 +437,11 @@ json Matcher::match(const ImageRGB & image) {
         json d;
         d["rule_name"] = getStr(rule, "name");
         d["threshold"] = round4(ruleNumber(rule, "threshold", 0.5));
-        d["score_diff"] = round4(ruleNumber(rule, "score_diff", 0));
         d["hit"] = false;
 
         double best_positive_score = 0.0;
         std::string best_positive_text;
         json positive_scores = json::array();
-        double max_negative_score = 0.0;
-        json negative_scores = json::array();
 
         auto ap = attr_pos_.find(id);
         bool symbolic = ap != attr_pos_.end() && ap->second.has_value() && !ap->second->empty();
@@ -484,12 +457,6 @@ json Matcher::match(const ImageRGB & image) {
             }
             best_positive_score = (double)present.size() / (double)pos_attrs.size();
             best_positive_text = present.empty() ? pos_attrs[0] : join(present, ",");
-            // 负样本属性：检出任一 → 1.0（python: rule_attribute_negatives & detected）
-            auto an = attr_neg_.find(id);
-            if (an != attr_neg_.end()) {
-                for (const auto & a : an->second)
-                    if (detected.count(a)) { max_negative_score = 1.0; break; }
-            }
             d["expected"] = pos_attrs;    // 规则要求的属性
             d["hit_attrs"] = present;     // 本帧检出的
             d["missing_attrs"] = missing; // 未命中的属性（调试页高亮）
@@ -519,31 +486,10 @@ json Matcher::match(const ImageRGB & image) {
             auto pt = pos_texts_.find(id);
             if (pt != pos_texts_.end() && best_idx < pt->second.size())
                 best_positive_text = pt->second[best_idx];
-
-            // 负样本向量 vs 描述：逐条得分 + 最大值（python: negative_embeddings @ image_embedding）
-            auto ne = neg_emb_.find(id);
-            if (ne != neg_emb_.end() && ne->second.n > 0 && image_rows > 0) {
-                const EmbMat & neg = ne->second;
-                for (size_t r = 0; r < neg.n; r++) {
-                    const float * row = neg.v.data() + r * neg.dim;
-                    float s = -1e30f;
-                    for (size_t c = 0; c < image_rows; c++) {
-                        const float * cv = image_emb.data() + c * neg.dim;
-                        float sc = 0;
-                        for (size_t k = 0; k < neg.dim; k++) sc += row[k] * cv[k];
-                        if (sc > s) s = sc;
-                    }
-                    negative_scores.push_back(round4(s));
-                    if ((double)s > max_negative_score) max_negative_score = (double)s;
-                }
-            }
         }
 
-        double score_diff = ruleNumber(rule, "score_diff", 0);
         double threshold = ruleNumber(rule, "threshold", 0.5);
-        // 负样本门（python 口径）：pos 须超过 max(neg)+score_diff；无负样本时退化为旧行为 pos>score_diff
-        bool passed = best_positive_score >= threshold &&
-                      best_positive_score > max_negative_score + score_diff;
+        bool passed = best_positive_score >= threshold;
 
         // ===== 二次核验（Qwen3-Reranker）：BGE 达标的语义规则再核一道 =====
         // 启用条件：Reranker 可用 && 规则字段 rerank_threshold>0（未设/0=关闭，存量规则零变化）
@@ -562,11 +508,8 @@ json Matcher::match(const ImageRGB & image) {
         }
         bool rerank_blocked = rerank_checked && rerank_p >= 0 && rerank_p < rerank_thr;
 
-        // 调试明细入表：状态区分 命中/低于阈值/被负样本压制/低于score_diff/核验未过/冷却中
+        // 调试明细入表：状态区分 命中/低于阈值/核验未过/冷却中
         d["score"] = round4(best_positive_score);
-        bool neg_blocked = !passed && !rerank_blocked && best_positive_score >= threshold &&
-                           max_negative_score > 0 &&
-                           best_positive_score <= max_negative_score + score_diff;
         if (in_cooldown) {
             d["status"] = "cooldown";
             d["would_hit"] = passed;
@@ -575,21 +518,13 @@ json Matcher::match(const ImageRGB & image) {
             d["hit"] = true;
         } else if (rerank_blocked) {
             d["status"] = "rerank_rejected";
-        } else if (neg_blocked) {
-            d["status"] = "negative_higher";
         } else {
-            d["status"] = best_positive_score < threshold ? "below_threshold" : "below_score_diff";
+            d["status"] = "below_threshold";
         }
         if (!symbolic) {
             auto pt = pos_texts_.find(id);
             if (pt != pos_texts_.end()) d["positive_list"] = pt->second;
             d["positive_scores"] = positive_scores;
-        }
-        if (max_negative_score > 0 || !negative_scores.empty()) {
-            auto nt = neg_texts_.find(id);
-            if (nt != neg_texts_.end()) d["negative_list"] = nt->second;
-            d["negative_scores"] = negative_scores;
-            d["max_negative_score"] = round4(max_negative_score);
         }
         dbg_rules.push_back(d);
         if (!passed || in_cooldown) continue;   // 冷却中只记分不触发，与旧行为一致
@@ -607,11 +542,6 @@ json Matcher::match(const ImageRGB & image) {
         m["positive"] = best_positive_text;
         m["positive_list"] = pos;
         m["positive_scores"] = positive_scores;
-        auto nt = neg_texts_.find(id);
-        m["negative_list"] = nt != neg_texts_.end() ? json(nt->second) : json::array();
-        m["negative_scores"] = negative_scores;
-        m["negative_higher"] = max_negative_score >= threshold &&
-                               max_negative_score >= best_positive_score;
         m["final_score"] = round4(best_positive_score);
         if (rerank_checked) {   // 命中的规则也带上核验分，告警/检测日志可追溯
             m["rerank_score"] = rerank_p >= 0 ? json(round4(rerank_p)) : json();
