@@ -67,3 +67,13 @@
 - 全管线 vs 基线仅剩 stb vs libjpeg 解码噪声（0.6% 字节、±1 LSB、emb cos≥0.9996）——
   除非板端引入 libjpeg-turbo，否则为不可再压缩的地板。
 - 第三次全量重编上线（二进制 md5 b76707d4）。待 golden + compare 复拍结果补录。
+
+## 2026-11-18 逐字节复刻版全量复拍：收尾 PASS
+
+- 第三次全量重编完成（二进制 md5 b76707d4，alive=100000），板上 golden 复跑四项全 PASS
+  （ids 18/18、text cos≥0.99981、image cos≥0.99968、topk 仅尾名平局重排）。
+- compare_board 全量复拍（18 查询×top20 vs x86 torch 基线 /tmp/baseline_full.json）：
+  **平局外排序不符 0、max|Δ|=0.0148**（上一版 0.0377 → 修复后减半，阈值 0.03）、
+  top20 重合 19.39/20、top3 集合 16/18（不符均为平局带换位，rank 判 0）。→ **RESULT: PASS**
+- 残余分差即 stb vs libjpeg 解码噪声地板（emb cos≥0.9996），除非引入 libjpeg-turbo 不可再压。
+- 至此移植全部收尾：golden、E2E（500 与 10 万两档）全 PASS。
