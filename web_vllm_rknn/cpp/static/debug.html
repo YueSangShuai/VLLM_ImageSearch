@@ -341,7 +341,7 @@
                 <div style="margin:0.5rem 0;"><strong>属性:</strong><br>${attrs || '—'}</div>
                 <div style="margin:0.5rem 0;"><strong>规则明细（分数/阈值，含未命中）:</strong><br>
                     ${detailsFull || (rules ? `<div style="margin:0.2rem 0;">命中规则:<br>${rules}</div>`
-                        : (e.outside_roi ? '—（区域外行人，未做匹配）' : '未命中（无逐规则明细，可能为旧记录）')}</div>
+                        : (e.outside_roi ? '—（区域外行人，未做匹配）' : '未命中（无逐规则明细，可能为旧记录）'))}</div>
             `;
             document.getElementById('imageModal').style.display = 'flex';
         }

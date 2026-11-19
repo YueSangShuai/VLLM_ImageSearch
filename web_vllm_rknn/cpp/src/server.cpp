@@ -778,7 +778,7 @@ void Server::setup_routes() {
 
     // ==================== 调试捕获（VLM_DEBUG_CAPTURE）====================
     svr_.Get("/api/debug", [](const httplib::Request & req, httplib::Response & res) {
-        json logs = load_json_array(g_paths->debug_log_file);
+        json logs = load_debug_logs();   // jsonl + 旧 json 合并，最新在前
         // ?limit=N 截断（默认全部，最新在前），前端分页可选
         std::string limit_s = req.get_param_value("limit");
         if (!limit_s.empty()) {
@@ -796,7 +796,8 @@ void Server::setup_routes() {
         std::error_code ec;
         if (fs::exists(g_paths->debug_dir, ec)) fs::remove_all(g_paths->debug_dir, ec);
         fs::create_directories(g_paths->debug_dir, ec);
-        save_json_atomic(g_paths->debug_log_file, json::array());
+        fs::remove(g_paths->debug_log_jsonl, ec);
+        fs::remove(g_paths->debug_log_file, ec);
         res_json(res, {{"success", true}});
     });
 

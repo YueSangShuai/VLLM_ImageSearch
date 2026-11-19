@@ -40,8 +40,11 @@ struct Config {
     std::string embed_query_prefix;
 
     // 调试捕获：VLM_DEBUG_CAPTURE=1 时，所有检测到的行人（无论是否命中规则）
-    // 都存图 + 描述进 data/debug_log.json，web /debug 页查看。默认关闭。
+    // 都存图 + 描述进 data/debug_log.jsonl（追加写），web /debug 页查看。默认关闭。
     bool debug_capture = false;
+    // 调试捕获日志条数上限；0=不限（默认）。>0 时回退头插截断策略，
+    // 被逐出条目的图片一并删除（防板端磁盘堆积）。
+    int debug_log_max = 0;
 
     // 检测
     std::string yolo_onnx_path;

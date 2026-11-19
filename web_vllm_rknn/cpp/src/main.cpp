@@ -13,6 +13,7 @@ int main(int argc, char ** argv) {
     Config cfg = Config::load();
 
     g_paths = new Paths(Paths::from_data_dir(cfg.data_dir));
+    g_debug_log_max = cfg.debug_log_max;  // 0=调试捕获日志不限条数
 
     printf("🚀 预加载Qwen-VL + BGE模型...\n");
     auto monitor = std::make_unique<Monitor>(cfg);
