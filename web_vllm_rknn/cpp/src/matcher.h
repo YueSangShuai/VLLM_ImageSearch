@@ -1,6 +1,6 @@
 #pragma once
-// 对齐 processor.py VLMTextMatcher：VLM 描述 + BGE 向量 / 属性符号匹配。
-// 两种模式：description | combined（combined 用属性线性头）
+// 对齐 processor.py VLMTextMatcher：VLM 描述 + BGE 向量匹配（可选 Qwen3-Reranker 二次核验）。
+// 属性线性头输出仅随描述展示，不参与规则匹配。
 #include "config.h"
 #include "frame.h"
 #include "json_store.h"
@@ -35,9 +35,8 @@ public:
 
     // ---- 调试捕获（VLM_DEBUG_CAPTURE）----
     // match() 期间生成的描述快照：{description, description_zh, attributes,
-    // rules(逐规则得分明细：name/type/score/threshold/status/hit（开启二次核验的规则附
-    // rerank_score/rerank_threshold，status 可为 rerank_rejected），symbolic 附带
-    // expected/hit_attrs/missing_attrs，semantic 附带 positive_list/positive_scores)}
+    // rules(逐规则得分明细：name/score/threshold/status/hit + positive_list/positive_scores，
+    // 开启二次核验的规则附 rerank_score/rerank_threshold，status 可为 rerank_rejected)}
     json lastDebugSnapshot();
     // 未走 match 描述路径（无规则等）时补一次描述生成，供调试页展示
     json describeForDebug(const ImageRGB & image);
@@ -49,11 +48,8 @@ private:
         size_t dim = 512;
     };
 
-    // ---- 属性表 / 文本工具（对应下划线方法）----
+    // ---- 文本工具（对应下划线方法）----
     std::vector<std::string> normalizeTexts(const json & texts) const;
-    std::string lookupAttribute(const std::string & token) const;   // "" = 未命中
-    std::vector<std::string> extractValidAttributes(const std::string & text) const;
-    std::optional<std::set<std::string>> parseRuleAttributes(const std::string & text) const;
     std::string sanitizeRuleText(const std::string & text, size_t max_len) const;
     std::pair<std::string, std::string> splitBilingual(const std::string & text) const;
     std::string cleanVlmDescription(const std::string & text, size_t max_chars) const;
@@ -71,7 +67,6 @@ private:
     Reranker * reranker_;      // 可空：二次核验禁用
     Config cfg_;
 
-    std::string mode_;
     std::string base_prompt_, description_prompt_;
     int vlm_max_;
     double temp_, rep_;
@@ -79,7 +74,6 @@ private:
     std::vector<json> rules_;
     std::map<std::string, EmbMat> rule_emb_;
     std::map<std::string, std::vector<std::string>> pos_texts_;
-    std::map<std::string, std::optional<std::set<std::string>>> attr_pos_;  // nullopt=需语义匹配
     std::map<std::string, double> last_trigger_;
     // 本次 match() 触发前的 last_trigger_ 旧值（-1=原本无记录），供 undoTrigger 回滚；
     // match() 开头清空。仅设备线程触碰（match/undoTrigger 同线程），锁内读写即可

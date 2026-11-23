@@ -428,14 +428,6 @@ void StreamProcessor::captureDebug(const ImageRGB & person, const ImageRGB & fra
                         (has_p ? format_double(d["rerank_score"].get<double>()) : std::string("故障")) +
                         "/" + format_double(d.value("rerank_threshold", 0.5)) + "]";
             }
-            if (d.value("type", "") == "symbolic") {
-                auto missing = d.contains("missing_attrs") ? d["missing_attrs"] : json::array();
-                if (!missing.empty()) {
-                    std::string ms;
-                    for (const auto & a : missing) ms += (ms.empty() ? "" : ",") + a.get<std::string>();
-                    item += "[缺:" + ms + "]";
-                }
-            }
             std::string st = d.value("status", "");
             if (st == "hit") hit_s += (hit_s.empty() ? "" : " ") + item;
             else miss_s += (miss_s.empty() ? "" : " ") + item +

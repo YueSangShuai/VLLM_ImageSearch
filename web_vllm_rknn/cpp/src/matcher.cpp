@@ -1,5 +1,4 @@
 #include "matcher.h"
-#include "attributes.h"
 #include "reranker.h"
 #include "text_embedder.h"
 #include "util.h"
@@ -9,8 +8,6 @@
 #include <cmath>
 #include <regex>
 #include <unordered_map>
-
-// 预定义属性表见 attributes.h（与 bench_models 共用）
 
 // ==================== 通用文本工具 ====================
 
@@ -34,15 +31,6 @@ static std::string collapseWs(const std::string & s) {
     return codepoints_to_utf8(out);
 }
 
-// 按空白切词（等价 chunk.split()）
-static std::vector<std::string> splitWs(const std::string & s) {
-    std::vector<std::string> out;
-    for (const auto & part : split_any(s, " \t\r\n")) {
-        if (!part.empty()) out.push_back(part);
-    }
-    return out;
-}
-
 static double round4(double v) { return std::round(v * 10000.0) / 10000.0; }
 
 static std::string getStr(const json & j, const char * key, const std::string & def = "") {
@@ -55,7 +43,6 @@ static std::string getStr(const json & j, const char * key, const std::string & 
 Matcher::Matcher(VlmDescriber * describer, TextEmbedder * embedder, Reranker * reranker,
                  const Config & cfg)
     : vlm_(describer), emb_(embedder), reranker_(reranker), cfg_(cfg) {
-    mode_ = cfg.match_mode;
     base_prompt_ = cfg.description_prompt;
     vlm_max_ = cfg.vlm_max_new_tokens;
     temp_ = cfg.vlm_temperature;
@@ -81,39 +68,6 @@ std::vector<std::string> Matcher::normalizeTexts(const json & texts) const {
         }
     }
     return out;
-}
-
-std::string Matcher::lookupAttribute(const std::string & token) const {
-    // _lookup_attribute：strip() 后去标点，再查两种写法
-    std::string cleaned = trim_chars(trim(token), ".。:：`*\"'");
-    if (cleaned.empty()) return "";
-    const auto & tbl = attrLookupTable();
-    auto it = tbl.find(tolower_ascii(cleaned));
-    if (it != tbl.end()) return it->second;
-    std::vector<uint32_t> nosep_cps;
-    for (uint32_t cp : utf8_to_codepoints(cleaned)) {
-        if (cp != '-' && cp != '_' && cp != ' ') nosep_cps.push_back(cp);   // re.sub("[-_ ]","")
-    }
-    it = tbl.find(tolower_ascii(codepoints_to_utf8(nosep_cps)));
-    return it != tbl.end() ? it->second : std::string();
-}
-
-std::optional<std::set<std::string>> Matcher::parseRuleAttributes(const std::string & text) const {
-    // _parse_rule_attributes：全部 token 都是属性名才返回集合，否则 nullopt（回退语义匹配）
-    std::set<std::string> attrs;
-    bool found = false;
-    for (const auto & chunk : split_any(text, ",，、;；/|")) {
-        for (const auto & sub : splitWs(chunk)) {
-            std::string cleaned = trim_chars(trim(sub), ".。:：`*\"'");
-            if (cleaned.empty()) continue;
-            std::string attr = lookupAttribute(cleaned);
-            if (attr.empty()) return std::nullopt;
-            attrs.insert(attr);
-            found = true;
-        }
-    }
-    if (!found) return std::nullopt;
-    return attrs;
 }
 
 std::string Matcher::sanitizeRuleText(const std::string & text, size_t max_len) const {
@@ -216,10 +170,6 @@ Matcher::DescResult Matcher::describeImage(const ImageRGB & img, const std::stri
     DescResult r;
     std::string description = vlm_->describe(img, prompt, vlm_max_, temp_, rep_,
                                              head_on_ ? &r.attrs : nullptr);
-    if (head_on_ && !description.empty() && !r.attrs.empty() &&
-        std::find(r.attrs.begin(), r.attrs.end(), "Female") == r.attrs.end()) {
-        r.attrs.push_back("Male");   // Female 缺失派生 Male（规则符号表用）
-    }
     auto [en, zh] = splitBilingual(description);
     r.zh = zh.empty() ? "" : collapseWs(zh);
     r.text = cleanVlmDescription(en, 1200);
@@ -243,7 +193,7 @@ static bool ruleBool(const json & r, const char * key, bool def) {
 }
 
 void Matcher::updateRules(const json & rules) {
-    // update_rules：只保留 enabled 规则；预计算正样本向量与属性解析。
+    // update_rules：只保留 enabled 规则；预计算正样本向量。
     // 卡顿治理两条（2026-11-05）：
     //   ① vec_cache_ 文本→向量缓存：只有新文本才进 BGE（调阈值/改名/开关 = 零编码，微秒级）；
     //   ② 编码在 mu_ 锁外进行——match() 持 mu_ 跨整个 VLM 描述（可达数秒），旧版整表
@@ -295,7 +245,6 @@ void Matcher::updateRules(const json & rules) {
         rules_ = std::move(new_rules);
         rule_emb_.clear();
         pos_texts_.clear();
-        attr_pos_.clear();
 
         for (const auto & rt : rts) {
             const std::string & id = rt.id;
@@ -309,17 +258,6 @@ void Matcher::updateRules(const json & rules) {
                 m.n++;
             }
             rule_emb_[id] = std::move(m);
-
-            if (mode_ == "combined") {
-                std::optional<std::set<std::string>> merged = std::set<std::string>();
-                bool ok = !rt.pos.empty();
-                for (const auto & t : rt.pos) {
-                    auto parsed = parseRuleAttributes(t);
-                    if (!parsed) { ok = false; break; }
-                    merged->insert(parsed->begin(), parsed->end());
-                }
-                attr_pos_[id] = ok ? merged : std::optional<std::set<std::string>>{};
-            }
         }
 
         description_prompt_ = base_prompt_;
@@ -353,7 +291,7 @@ json Matcher::describeForDebug(const ImageRGB & image) {
 }
 
 json Matcher::match(const ImageRGB & image) {
-    // match：符号匹配（属性规则）+ BGE 向量匹配（自然语言规则）
+    // match：BGE 向量匹配（自然语言规则）+ 可选 Qwen3-Reranker 二次核验
     json empty = json::array();
     std::string prompt;
     bool rules_empty;
@@ -385,11 +323,6 @@ json Matcher::match(const ImageRGB & image) {
     std::lock_guard<std::mutex> lk(mu_);
     std::string description = dr.text;
 
-    std::set<std::string> detected;
-    if (mode_ == "combined") {
-        detected.insert(dr.attrs.begin(), dr.attrs.end());
-    }
-
     // 调试快照：本帧描述/中文描述/属性（未命中规则的检测也能在 /debug 页看到）
     {
         dbg_snapshot_ = json::object();
@@ -405,24 +338,11 @@ json Matcher::match(const ImageRGB & image) {
         return empty;
     }
 
-    // combined：全部规则都能符号匹配（属性规则）时跳过图像描述向量计算
-    bool needs_embedding = true;
-    if (mode_ == "combined") {
-        needs_embedding = false;
-        for (const auto & rule : rules_) {
-            auto it = attr_pos_.find(getStr(rule, "id"));
-            if (it == attr_pos_.end() || !it->second.has_value()) { needs_embedding = true; break; }
-        }
-    }
     // 整句对整句：整段描述（cleanVlmDescription 后）作为单行向量（BGE doc 侧，不加前缀）。
     // 2026-11-04 应需求从「分句+取 max」改回整句口径，注意分数整体下移 0.07~0.11，
     // 分句口径下标定的规则阈值（黑衣服≈0.60）相应偏高，必要时下调。
-    std::vector<float> image_emb;
-    size_t image_rows = 0;
-    if (needs_embedding) {
-        image_emb = emb_->encode({description});
-        image_rows = 1;
-    }
+    std::vector<float> image_emb = emb_->encode({description});
+    size_t image_rows = 1;
 
     json matches = json::array();
     // 调试捕获：逐规则得分明细（未命中/冷却中的规则也算分、也记录），match 末尾挂到快照
@@ -443,64 +363,45 @@ json Matcher::match(const ImageRGB & image) {
         std::string best_positive_text;
         json positive_scores = json::array();
 
-        auto ap = attr_pos_.find(id);
-        bool symbolic = ap != attr_pos_.end() && ap->second.has_value() && !ap->second->empty();
-        d["type"] = symbolic ? "symbolic" : "semantic";
-        if (symbolic) {
-            // 符号匹配：得分为正样本属性覆盖率
-            std::vector<std::string> pos_attrs(ap->second->begin(), ap->second->end());  // set 已有序
-            std::vector<std::string> present, missing;
-            for (const auto & a : pos_attrs) {
-                bool has = detected.count(a) > 0;
-                positive_scores.push_back(has ? 1.0 : 0.0);
-                (has ? present : missing).push_back(a);
-            }
-            best_positive_score = (double)present.size() / (double)pos_attrs.size();
-            best_positive_text = present.empty() ? pos_attrs[0] : join(present, ",");
-            d["expected"] = pos_attrs;    // 规则要求的属性
-            d["hit_attrs"] = present;     // 本帧检出的
-            d["missing_attrs"] = missing; // 未命中的属性（调试页高亮）
-        } else {
-            auto pe = rule_emb_.find(id);
-            if (pe == rule_emb_.end() || pe->second.n == 0) {
-                d["status"] = "no_embedding";   // 规则无正样本向量，不打分
-                dbg_rules.push_back(d);
-                continue;
-            }
-            const EmbMat & pos = pe->second;
-            size_t best_idx = 0;
-            float best_raw = -1e30f;
-            for (size_t r = 0; r < pos.n; r++) {
-                const float * row = pos.v.data() + r * pos.dim;
-                float s = image_rows ? -1e30f : 0.0f;
-                for (size_t c = 0; c < image_rows; c++) {   // 对每个分句取 max
-                    const float * cv = image_emb.data() + c * pos.dim;
-                    float sc = 0;
-                    for (size_t k = 0; k < pos.dim; k++) sc += row[k] * cv[k];
-                    if (sc > s) s = sc;
-                }
-                positive_scores.push_back(round4(s));
-                if (s > best_raw) { best_raw = s; best_idx = r; }
-            }
-            best_positive_score = best_raw;
-            auto pt = pos_texts_.find(id);
-            if (pt != pos_texts_.end() && best_idx < pt->second.size())
-                best_positive_text = pt->second[best_idx];
+        auto pe = rule_emb_.find(id);
+        if (pe == rule_emb_.end() || pe->second.n == 0) {
+            d["status"] = "no_embedding";   // 规则无正样本向量，不打分
+            dbg_rules.push_back(d);
+            continue;
         }
+        const EmbMat & pos = pe->second;
+        size_t best_idx = 0;
+        float best_raw = -1e30f;
+        for (size_t r = 0; r < pos.n; r++) {
+            const float * row = pos.v.data() + r * pos.dim;
+            float s = image_rows ? -1e30f : 0.0f;
+            for (size_t c = 0; c < image_rows; c++) {   // 对每个分句取 max
+                const float * cv = image_emb.data() + c * pos.dim;
+                float sc = 0;
+                for (size_t k = 0; k < pos.dim; k++) sc += row[k] * cv[k];
+                if (sc > s) s = sc;
+            }
+            positive_scores.push_back(round4(s));
+            if (s > best_raw) { best_raw = s; best_idx = r; }
+        }
+        best_positive_score = best_raw;
+        auto pt = pos_texts_.find(id);
+        if (pt != pos_texts_.end() && best_idx < pt->second.size())
+            best_positive_text = pt->second[best_idx];
 
         double threshold = ruleNumber(rule, "threshold", 0.5);
         bool passed = best_positive_score >= threshold;
 
-        // ===== 二次核验（Qwen3-Reranker）：BGE 达标的语义规则再核一道 =====
-        // 启用条件：Reranker 可用 && 规则字段 rerank_threshold>0（未设/0=关闭，存量规则零变化）
-        // && 语义规则（符号规则不走 BGE、也不核验）。冷却中照跑（would_hit 须反映核验结果）但不触发。
+        // ===== 二次核验（Qwen3-Reranker）：BGE 达标的规则再核一道 =====
+        // 启用条件：Reranker 可用 && 规则字段 rerank_threshold>0（未设/0=关闭，存量规则零变化）。
+        // 冷却中照跑（would_hit 须反映核验结果）但不触发。
         // query=最高分正样本文本，document=本帧 VLM 描述。P<0（rkllm 失败）放行：
         // 核验故障不阻断告警链路。耗时 ~231ms/次，只有 BGE 过关的规则才会调用，成本有界。
         double rerank_thr = ruleNumber(rule, "rerank_threshold", 0);
         bool rerank_checked = false;
         double rerank_p = -1.0;
         if (rerank_thr > 0) d["rerank_threshold"] = round4(rerank_thr);
-        if (reranker_ && reranker_->ok() && rerank_thr > 0 && !symbolic && passed) {
+        if (reranker_ && reranker_->ok() && rerank_thr > 0 && passed) {
             rerank_p = reranker_->rerank(best_positive_text, description);
             rerank_checked = true;
             d["rerank_score"] = rerank_p >= 0 ? json(round4(rerank_p)) : json();
@@ -521,11 +422,8 @@ json Matcher::match(const ImageRGB & image) {
         } else {
             d["status"] = "below_threshold";
         }
-        if (!symbolic) {
-            auto pt = pos_texts_.find(id);
-            if (pt != pos_texts_.end()) d["positive_list"] = pt->second;
-            d["positive_scores"] = positive_scores;
-        }
+        d["positive_list"] = pos_texts_.count(id) ? json(pos_texts_[id]) : json::array();
+        d["positive_scores"] = positive_scores;
         dbg_rules.push_back(d);
         if (!passed || in_cooldown) continue;   // 冷却中只记分不触发，与旧行为一致
 
@@ -534,13 +432,12 @@ json Matcher::match(const ImageRGB & image) {
         auto prev_lt = last_trigger_.find(id);
         cooldown_backup_[id] = prev_lt == last_trigger_.end() ? -1.0 : prev_lt->second;
         last_trigger_[id] = now;
-        std::vector<std::string> pos = pos_texts_.count(id) ? pos_texts_[id] : std::vector<std::string>{};
 
         json m;
         m["rule_id"] = id;
         m["rule_name"] = getStr(rule, "name");
         m["positive"] = best_positive_text;
-        m["positive_list"] = pos;
+        m["positive_list"] = d["positive_list"];
         m["positive_scores"] = positive_scores;
         m["final_score"] = round4(best_positive_score);
         if (rerank_checked) {   // 命中的规则也带上核验分，告警/检测日志可追溯
@@ -550,11 +447,7 @@ json Matcher::match(const ImageRGB & image) {
         m["description"] = description;
         m["base_description"] = description;
         m["description_zh"] = dr.zh;
-        if (!detected.empty() || (head_on_ && !dr.attrs.empty())) {
-            m["attributes"] = dr.attrs;   // combined（符号匹配）或 description+头（仅展示）
-        } else {
-            m["attributes"] = json::array();
-        }
+        m["attributes"] = (head_on_ && !dr.attrs.empty()) ? json(dr.attrs) : json::array();  // 属性头仅展示，不参与匹配
         matches.push_back(m);
     }
     dbg_snapshot_["rules"] = dbg_rules;   // 逐规则得分明细（含未命中），随快照进 /debug

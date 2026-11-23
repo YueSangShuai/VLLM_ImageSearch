@@ -241,10 +241,7 @@
                     rerank = ` <span class="thr" style="margin-left:6px;">核验</span>${pv}${rt}`;
                 }
                 let extra = '';
-                if (d.type === 'symbolic') {
-                    const miss = d.missing_attrs || [];
-                    if (miss.length) extra = ` <span style="color:#842029;">缺:${miss.map(esc).join(',')}</span>`;
-                } else if (modal && d.positive_list && d.positive_list.length) {
+                if (modal && d.positive_list && d.positive_list.length) {
                     const rows = d.positive_list.map((t, i) => {
                         const s = (d.positive_scores && d.positive_scores[i] != null)
                             ? (d.positive_scores[i] * 100).toFixed(1) + '%' : '—';
@@ -327,16 +324,9 @@
             const rules = (e.matched_rules || []).map(r =>
                 `<div style="margin:0.2rem 0;">${esc(r.rule_name)}
                  <span class="hit-badge hit-yes" style="margin-left:0.4rem;">${(r.score * 100).toFixed(1)}%</span></div>`).join('');
-            // 规则明细：符号规则展开 期望属性(命中/缺失) + 覆盖率，语义规则逐正样本分数
-            const detailsFull = (e.rule_details || []).length ? (e.rule_details).map(d => {
-                let attrChips = '';
-                if (d.type === 'symbolic' && d.expected && d.expected.length) {
-                    const miss = new Set(d.missing_attrs || []);
-                    attrChips = `<div style="margin-left:1rem;">` + d.expected.map(a =>
-                        `<span class="attr-chip${miss.has(a) ? ' miss' : ''}">${esc(a)}</span>`).join('') + `</div>`;
-                }
-                return renderRuleDetails([d], true) + attrChips;
-            }).join('') : '';
+            // 规则明细：逐正样本分数
+            const detailsFull = (e.rule_details || []).length ? (e.rule_details).map(d =>
+                renderRuleDetails([d], true)).join('') : '';
             document.getElementById('modalInfo').innerHTML = `
                 <p><strong>设备名称:</strong> ${esc(e.device_name)}　<strong>时间:</strong> ${formatTime(e.timestamp)}</p>
                 <p><strong>BBox:</strong> [${(e.bbox || []).join(', ')}]${e.low_quality ? '　<span style="color:#999;">低质量</span>' : ''}
