@@ -32,6 +32,10 @@ public:
     void startDevice(const std::string & device_id);
     void stopDevice(const std::string & device_id);
 
+    // persistent 拉流心跳（online 判定改用帧流）：返回该设备距上一帧的毫秒数；
+    // -1 = 该设备没有在跑常驻拉流（未监控/oneshot/还没出过帧）→ 心跳循环回退 RTSP 探测
+    int64_t frameHeartbeatAge(const std::string & device_id);
+
 private:
     void handleAlert(const json & alert);   // 对应 handle_alert：prepend_alert
 

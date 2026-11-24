@@ -1,6 +1,11 @@
 #pragma once
 // 对应 processor.py StreamProcessor：单设备 RTSP 取流 -> YOLO 检测 -> 匹配 -> 告警落盘
+// 取帧两种模式（env VLM_PULL_MODE，默认 oneshot 可回退）：
+//   oneshot    每帧起一次性 ffmpeg（历史行为，原样保留）
+//   persistent 常驻拉流+双线程：读流线程 PersistentPuller 写「最新帧槽」，
+//              本线程只跑处理逻辑（YOLO/VLM/BGE/核验/ROI/告警/调试零改动）
 #include "detector.h"
+#include "frame.h"
 #include "json_store.h"
 #include "matcher.h"
 
@@ -9,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 // DeviceManager.get_rtsp_url：用户名/密码 URL 编码，按 stream_type 选主/子码流
@@ -32,8 +38,15 @@ public:
     std::function<void(const json &)> on_alert;
     const json & deviceInfo() const { return device_; }
 
+    // persistent 拉流心跳（设备 online 判定用，Monitor::frameHeartbeatAge 透出）：
+    // pullActive()=常驻拉流线程在跑；frameAgeMs()=距上一帧入槽的毫秒数，-1=还没跑过或无帧
+    bool pullActive() const { return pull_active_; }
+    int64_t frameAgeMs() const { return frame_slot_.ageMs(); }
+
 private:
     json deviceSnapshot() const;             // 加锁拷贝，供每帧配置解析
+    void runOneshot(const std::string & rtsp_url, const std::string & device_name);
+    void runPersistent(const std::string & rtsp_url, const std::string & device_name);
     void processFrame(const ImageRGB & frame);
     void processDetection(const Detection & det, const ImageRGB & frame);
     void captureDebug(const ImageRGB & person, const ImageRGB & frame,
@@ -48,4 +61,12 @@ private:
     Matcher * matcher_;
     bool debug_capture_ = false;
     std::atomic<bool> running_{false};
+
+    // persistent 模式：reader_ 读流写帧槽，run() 所在线程即处理线程。
+    // 两个线程都必须被 join（run() 末尾 join reader_，stop 路径由 Monitor 收）——
+    // 漏一个就是 use-after-free（PLAN 危险清单 #7）
+    LatestFrameSlot frame_slot_;
+    PersistentPuller puller_{&frame_slot_};
+    std::thread reader_;
+    std::atomic<bool> pull_active_{false};
 };

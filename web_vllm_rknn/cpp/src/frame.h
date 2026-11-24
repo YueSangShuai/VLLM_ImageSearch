@@ -1,9 +1,14 @@
 #pragma once
 // 图像 I/O：ffmpeg 子进程取 RTSP 帧；stb 负责 JPEG/PNG 编解码与缩放（不引入 OpenCV）
-#include <string>
-#include <vector>
+// 常驻拉流（VLM_PULL_MODE=persistent）：PersistentPuller 读流线程 + LatestFrameSlot 最新帧槽
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
+#include <string>
 #include <utility>
+#include <vector>
+#include <sys/types.h>
 
 struct ImageRGB {
     int w = 0, h = 0;
@@ -36,3 +41,43 @@ std::string build_rtsp_url(const std::string &username, const std::string &passw
                            const std::string &ip, const std::string &port,
                            const std::string &path);
 std::string url_encode(const std::string &s);
+
+// ==================== 常驻拉流（VLM_PULL_MODE=persistent，PLAN「双线程」方案） ====================
+
+// 单格「最新帧槽」，不是队列：读流线程覆盖旧帧、处理慢时中间帧直接丢——latest-wins，
+// 杜绝积压过期画面（处理到人已走出画面的告警图）。槽内只放 JPEG 字节：
+// 处理线程拷出后在锁外解码，否则读流被解码拖住 → 反压 ffmpeg 管道 → 整设备卡死。
+class LatestFrameSlot {
+public:
+    void publish(std::vector<uint8_t> jpeg, int64_t stamp_ms);
+    // 阻塞至 seq != last_seq 的新帧出现，或 close()/running=false。true=来了新帧
+    bool waitNew(uint64_t last_seq, const std::atomic<bool> &running);
+    // 锁内拷出最新帧，返回其序号（调用方更新 last_seq）与帧龄(ms)
+    uint64_t latest(std::vector<uint8_t> &jpeg, int64_t &age_ms);
+    int64_t ageMs() const;   // 距上一帧写入(ms，单调钟)；-1=从未有帧（online 判定回退用）
+    void close();            // 唤醒全部 waitNew 等待者（stop 时）
+private:
+    mutable std::mutex mu_;
+    std::condition_variable cv_;
+    uint64_t seq_ = 0;
+    std::vector<uint8_t> jpeg_;
+    int64_t stamp_ms_ = 0;   // steady 单调钟毫秒；只与同钟的 now 相减，不做跨源比较
+    bool closed_ = false;
+};
+
+// 常驻 ffmpeg 拉流句柄（RAII）：解码出的 JPEG 写入帧槽；poll 看门狗在 VLM_PULL_STALE_MS
+// （默认 10s）无数据时判流挂起，杀进程组重连；重连退避 1→30s（成功过帧即复位 1s）。
+class PersistentPuller {
+public:
+    explicit PersistentPuller(LatestFrameSlot *slot) : slot_(slot) {}
+    ~PersistentPuller() { reap(); }
+    // 在专门的读流线程里跑；running=false 时返回。生命周期收进本句柄，
+    // 析构兜底杀进程组（防 ffmpeg 僵尸/挂起，PLAN 危险清单 #3）。
+    void loop(const std::string &rtsp_url, const std::string &tag, std::atomic<bool> &running);
+
+private:
+    void reap();   // kill(-pgid,SIGKILL)+waitpid 回收；可重复调用
+    LatestFrameSlot *slot_;
+    pid_t pid_ = -1;
+    int fd_ = -1;
+};

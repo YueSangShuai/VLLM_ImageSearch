@@ -369,8 +369,14 @@ void Server::run() {
     svr_.listen("0.0.0.0", cfg_.port);
 }
 
-// 对应 app.py device_heartbeat：每 5 秒检测所有设备，状态变更才回写
+// 对应 app.py device_heartbeat：每 5 秒检测所有设备，状态变更才回写。
+// persistent 拉流在跑的设备改用帧流心跳判活（不再起 RTSP 探测会话，减少摄像头
+// 会话翻动）：age≤VLM_PULL_STALE_MS 即 online；判死需连续 2 次超阈才翻转（迟滞，
+// 防读流瞬断重连造成状态抖动；恢复 online 不等迟滞，来了新帧立刻翻回）。
+// 未跑常驻拉流的设备（未监控/oneshot/从未出过帧）仍走原 RTSP 探测，兼作兜底。
 void Server::heartbeat_loop() {
+    const int64_t stale_ms = getenv_int("VLM_PULL_STALE_MS", 10000);
+    std::map<std::string, int> hb_misses;   // device id -> 连续帧流超阈次数
     while (hb_running_) {
         for (int i = 0; i < 50 && hb_running_; i++)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -385,7 +391,22 @@ void Server::heartbeat_loop() {
             for (auto & device : devices) {
                 if (!device.is_object()) continue;
                 std::string old_status = device.value("status", std::string("offline"));
-                std::string probe = test_rtsp_connection(device);
+                std::string dev_id = device.value("id", std::string(""));
+                std::string probe;
+                int64_t age = monitor_->frameHeartbeatAge(dev_id);
+                if (age >= 0) {
+                    if (age <= stale_ms) {
+                        probe = "online";
+                        hb_misses[dev_id] = 0;
+                    } else if (++hb_misses[dev_id] >= 2) {
+                        probe = "offline";
+                    } else {
+                        continue;   // 首次超阈不动状态（迟滞），等下一轮
+                    }
+                } else {
+                    hb_misses.erase(dev_id);
+                    probe = test_rtsp_connection(device);
+                }
                 if (old_status != probe) {
                     new_status[device.value("id", "")] = probe;
                     printf("📡 设备 '%s' 状态变更: %s -> %s\n",

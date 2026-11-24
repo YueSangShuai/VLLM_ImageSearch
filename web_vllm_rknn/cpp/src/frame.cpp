@@ -1,4 +1,5 @@
 #include "frame.h"
+#include "config.h"
 
 #include <poll.h>
 #include <sys/wait.h>
@@ -8,10 +9,12 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <csignal>
 #include <cstdlib>
+#include <thread>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -186,4 +189,155 @@ std::vector<uint8_t> placeholder_jpeg() {
     img.w = 640; img.h = 480;
     img.rgb.assign((size_t)640 * 480 * 3, 0);
     return encode_jpeg(img, 95);
+}
+
+// ==================== 常驻拉流：最新帧槽 + PersistentPuller ====================
+
+// 帧龄/看门狗用单调钟：系统时间被 NTP 回拨不该触发「流挂起」误杀或「旧帧」误丢
+static int64_t steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void LatestFrameSlot::publish(std::vector<uint8_t> jpeg, int64_t stamp_ms) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (closed_) return;
+        seq_++;
+        jpeg_ = std::move(jpeg);
+        stamp_ms_ = stamp_ms;
+    }
+    cv_.notify_all();
+}
+
+bool LatestFrameSlot::waitNew(uint64_t last_seq, const std::atomic<bool> & running) {
+    std::unique_lock<std::mutex> lk(mu_);
+    cv_.wait(lk, [&] { return !running.load() || closed_ || seq_ != last_seq; });
+    return running.load() && !closed_ && seq_ != last_seq;
+}
+
+uint64_t LatestFrameSlot::latest(std::vector<uint8_t> & jpeg, int64_t & age_ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    jpeg = jpeg_;                     // 只拷字节，解码留在锁外
+    age_ms = stamp_ms_ ? steady_ms() - stamp_ms_ : 0;
+    return seq_;
+}
+
+int64_t LatestFrameSlot::ageMs() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return stamp_ms_ ? steady_ms() - stamp_ms_ : -1;
+}
+
+void LatestFrameSlot::close() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        closed_ = true;
+    }
+    cv_.notify_all();
+}
+
+void PersistentPuller::reap() {
+    if (fd_ >= 0) { close(fd_); fd_ = -1; }
+    if (pid_ > 0) {
+        // 子进程 setpgid(0,0) 自成进程组：杀 -pgid 连它可能带的子孙一起收（PLAN 危险清单 #3）
+        kill(-pid_, SIGKILL);
+        kill(pid_, SIGKILL);          // setpgid 万一没生效的兜底
+        int status;
+        waitpid(pid_, &status, 0);    // SIGKILL 后即刻回收，不留僵尸
+        pid_ = -1;
+    }
+}
+
+void PersistentPuller::loop(const std::string & rtsp_url, const std::string & tag,
+                            std::atomic<bool> & running) {
+    const int64_t stale_ms = getenv_int("VLM_PULL_STALE_MS", 10000);
+    int backoff = 1;
+    std::vector<uint8_t> buf;
+    while (running) {
+        int fds[2];
+        if (pipe(fds) != 0) {
+            for (int i = 0; i < 10 && running; i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        pid_t pid = fork();
+        if (pid < 0) {
+            close(fds[0]); close(fds[1]);
+            for (int i = 0; i < 10 && running; i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        if (pid == 0) {
+            setpgid(0, 0);            // 自成进程组，重连时整组收割
+            dup2(fds[1], STDOUT_FILENO);
+            close(fds[0]); close(fds[1]);
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+            // 与一次性取帧同款参数，只去掉 -vframes 1：常驻解码、JPEG 连续出到 stdout
+            execlp("ffmpeg", "ffmpeg", "-loglevel", "error",
+                   "-rtsp_transport", "tcp", "-stimeout", "5000000",
+                   "-i", rtsp_url.c_str(),
+                   "-q:v", "5", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+                   (char *)nullptr);
+            _exit(127);
+        }
+        setpgid(pid, 0);              // 父进程并设一次，消除子进程 exec 前进组的窗口
+        close(fds[1]);
+        pid_ = pid;
+        fd_ = fds[0];
+        buf.clear();
+
+        bool got_frame = false;
+        int64_t last_out_ms = steady_ms();
+        while (running) {
+            struct pollfd p{fd_, POLLIN, 0};
+            int pr = poll(&p, 1, 200);
+            if (pr < 0) { if (errno == EINTR) continue; break; }
+            if (pr == 0) {
+                // 看门狗：TCP 半开时 ffmpeg 挂着不退出也不吐字节 → 主动杀了重连，
+                // 否则帧槽停在最后一帧（PLAN 危险清单 #1②）
+                if (steady_ms() - last_out_ms > stale_ms) {
+                    printf("[%s] 拉流 %lldms 无数据，杀掉 ffmpeg 重连\n",
+                           tag.c_str(), (long long)stale_ms);
+                    break;
+                }
+                continue;
+            }
+            uint8_t chunk[65536];
+            ssize_t n = read(fd_, chunk, sizeof(chunk));
+            if (n == 0) {
+                printf("[%s] 拉流中断（ffmpeg 退出），等待重连...\n", tag.c_str());
+                break;
+            }
+            if (n < 0) { if (errno == EINTR) continue; break; }
+            last_out_ms = steady_ms();
+            buf.insert(buf.end(), chunk, chunk + n);
+
+            // 按 JPEG 整包切帧 FFD8..FFD9：scan 数据里 0xFF 必被填充为 0xFF00，
+            // FFD9 只可能是真 EOI，不会在流中间误切
+            size_t pos = 0;
+            while (true) {
+                size_t soi = buf.size();
+                for (size_t i = pos + 1; i < buf.size(); i++)
+                    if (buf[i] == 0xD8 && buf[i - 1] == 0xFF) { soi = i - 1; break; }
+                if (soi == buf.size()) break;                       // 没有帧头，等更多数据
+                size_t eoi = buf.size();
+                for (size_t i = soi + 3; i < buf.size(); i++)
+                    if (buf[i] == 0xD9 && buf[i - 1] == 0xFF) { eoi = i; break; }
+                if (eoi == buf.size()) { pos = soi; break; }        // 帧没收完，留在缓冲
+                std::vector<uint8_t> jpeg(buf.begin() + soi, buf.begin() + eoi + 1);
+                slot_->publish(std::move(jpeg), steady_ms());
+                got_frame = true;
+                pos = eoi + 1;
+            }
+            if (pos > 0) buf.erase(buf.begin(), buf.begin() + pos);
+            if (buf.size() > (16u << 20)) buf.clear();              // 切帧始终不成帧的兜底：丢缓存防涨爆
+        }
+
+        reap();
+        if (!running) break;
+        for (int i = 0; i < backoff * 10 && running; i++)            // 退避可被 stop 打断
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        backoff = got_frame ? 1 : std::min(backoff * 2, 30);
+    }
 }

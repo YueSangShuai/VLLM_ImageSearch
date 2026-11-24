@@ -466,3 +466,20 @@ librkllmrt 1.3.1 头文件已带 `RKLLMPromptCacheParam{save_prompt_cache, promp
   降图像 token 数（196→更少，需重标属性头）或试 extend_param.n_batch>1。
   附带发现：贪心下同一张临界图两次 run 输出可以在「无匹配」vs「复读规则清单」间跳变
   （3 核 NPU 调度非逐位确定性？样本太少未定论，观察告警质量时留意）。
+
+### 2026-11-24 常驻拉流+双线程：代码落地（宿主验证完，板上未部署）
+- 按上文方案实施，env `VLM_PULL_MODE=persistent`（默认 oneshot，老路径零改动可回退）。
+  frame.{h,cpp} 新增 `LatestFrameSlot`（单格帧槽：seq+cv，latest-wins）与
+  `PersistentPuller`（常驻 ffmpeg→image2pipe 切帧写槽；setpgid 进程组、10s poll 看门狗
+  SIGKILL+waitpid 重连、退避 1→30s、RAII 析构兜底）。stream_processor run() 拆
+  oneshot/persistent 两条：persistent 读流线程+处理线程，处理线程 waitNew 唤醒（去 sleep1s
+  心跳）、锁外解码、帧龄>VLM_FRAME_MAX_AGE_MS(5000) 丢弃、处理后 VLM_MIN_INTERVAL_MS(1000)
+  限流保留、run 末尾先处理后 join 读流。online 判定：persistent 设备走帧流心跳
+  （age≤VLM_PULL_STALE_MS=10000 online，连续 2 次超阈才翻 offline＝迟滞；age=-1 未出过帧
+  回退原 RTSP 探测，兼作死流兜底）——Monitor::frameHeartbeatAge 透出，server heartbeat_loop
+  接入。三件套对策（序号/看门狗/帧龄）、进程组回收、状态迟滞、双线程 join 全部落码。
+  未做：软节流（RSS/温度降频，方案标注「可选」）；VLM_DEBUG_LOG_MAX 上线前打开属运维项。
+- 验证：交叉编译+qemu 依赖自检过；宿主新增 cpp/tools/test_pull.cpp 自测（PATH 注入假 ffmpeg
+  喂 997B 跨帧边界 chunk）8/8 全过：切帧完整、seq 单调、看门狗杀挂起实例并重连出第二轮帧、
+  stop 1.5s 内收口、全部假实例 waitpid 收干净无僵尸。板上验收清单（拔网线/48h 数进程/
+  同帧滞留压测/满载时延对比）待部署后跑。

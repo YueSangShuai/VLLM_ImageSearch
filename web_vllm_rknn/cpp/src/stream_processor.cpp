@@ -1,7 +1,9 @@
 #include "stream_processor.h"
+#include "config.h"
 #include "frame.h"
 #include "util.h"
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -238,13 +240,21 @@ json StreamProcessor::deviceSnapshot() const {
 }
 
 void StreamProcessor::run() {
-    // StreamProcessor.start()：ffmpeg 单帧拉取 + 指数退避重连
     json device = deviceSnapshot();
     std::string rtsp_url = device_rtsp_url(device);
     std::string device_name = getStr(device, "name", "Unknown");
-    printf("[%s] 开始连接流: %s\n", device_name.c_str(), rtsp_url.c_str());
 
     running_ = true;
+    std::string mode = getenv_str("VLM_PULL_MODE", "oneshot");
+    for (auto & ch : mode) ch = (char)tolower(ch);
+    if (mode == "persistent") runPersistent(rtsp_url, device_name);
+    else runOneshot(rtsp_url, device_name);
+}
+
+void StreamProcessor::runOneshot(const std::string & rtsp_url, const std::string & device_name) {
+    // StreamProcessor.start()：ffmpeg 单帧拉取 + 指数退避重连（历史行为）
+    printf("[%s] 开始连接流: %s\n", device_name.c_str(), rtsp_url.c_str());
+
     int reconnect_delay = 1;
     const int max_reconnect_delay = 30;
 
@@ -271,7 +281,54 @@ void StreamProcessor::run() {
     }
 }
 
-void StreamProcessor::stop() { running_ = false; }
+void StreamProcessor::runPersistent(const std::string & rtsp_url, const std::string & device_name) {
+    // PLAN「常驻拉流+双线程」：读流线程只管拉流写帧槽，本线程只做处理，
+    // 每帧不再付 RTSP 握手 + 等 I 帧的固定开销；空场扫描周期只剩 YOLO+最小间隔
+    printf("[%s] 开始常驻拉流: %s\n", device_name.c_str(), rtsp_url.c_str());
+    const int64_t min_interval_ms = getenv_int("VLM_MIN_INTERVAL_MS", 1000);  // 处理后限流（对策：防 NPU 满载）
+    const int64_t max_age_ms = getenv_int("VLM_FRAME_MAX_AGE_MS", 5000);      // 旧帧直接丢（对策：死流/积压）
+
+    pull_active_ = true;
+    reader_ = std::thread([this, rtsp_url, device_name] {
+        puller_.loop(rtsp_url, device_name, running_);
+    });
+
+    uint64_t last_seq = 0;
+    while (running_) {
+        // 等序号变化唤醒（取代 sleep 1s）。latest-wins：处理慢时中间帧被读流覆盖即丢
+        if (!frame_slot_.waitNew(last_seq, running_)) break;
+        std::vector<uint8_t> jpeg;
+        int64_t age_ms = 0;
+        last_seq = frame_slot_.latest(jpeg, age_ms);   // 锁内只拷字节
+        if (age_ms > max_age_ms) {
+            // 帧龄校验：网络停摆后恢复时 ffmpeg 会瞬间吐出一堆积压旧帧，
+            // 最新一格也可能是过期画面（人已走），直接丢（PLAN 危险清单 #1③）
+            printf("[%s] 丢弃旧帧（帧龄 %lldms > %lldms）\n", device_name.c_str(),
+                   (long long)age_ms, (long long)max_age_ms);
+            continue;
+        }
+        ImageRGB frame;
+        if (!decode_jpeg(jpeg, frame)) {               // 解码在锁外：读流线程不能被拖住
+            printf("[%s] 处理异常: Failed to decode frame\n", device_name.c_str());
+            continue;
+        }
+        if (running_) processFrame(frame);
+        if (running_ && min_interval_ms > 0) {
+            for (int64_t i = 0; i < min_interval_ms / 100 && running_; i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    // 先处理线程收工、后 join 读流线程（stop() 置 running_=false 并 close 帧槽，
+    // 读流线程 poll/退避处 200ms 内退出并杀掉 ffmpeg）
+    if (reader_.joinable()) reader_.join();
+    pull_active_ = false;
+}
+
+void StreamProcessor::stop() {
+    running_ = false;
+    frame_slot_.close();   // 唤醒可能卡在 waitNew 的处理线程，stop 即刻生效
+}
 
 // 从 frame 裁剪 [x1,y1,x2,y2)，越界自动收敛（对齐 numpy 切片语义）
 static bool crop_region(const ImageRGB & src, int x1, int y1, int x2, int y2, ImageRGB & out) {

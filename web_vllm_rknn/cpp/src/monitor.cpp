@@ -99,6 +99,18 @@ void Monitor::startDevice(const std::string & device_id) {
     }
 }
 
+int64_t Monitor::frameHeartbeatAge(const std::string & device_id) {
+    std::shared_ptr<Runner> runner;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = processors_.find(device_id);
+        if (it == processors_.end()) return -1;
+        runner = it->second;   // 引用计数保活，同 refreshRules 的并发 stopDevice 约定
+    }
+    if (!runner->proc->pullActive()) return -1;
+    return runner->proc->frameAgeMs();
+}
+
 void Monitor::stopDevice(const std::string & device_id) {
     std::shared_ptr<Runner> runner;
     {
@@ -109,7 +121,9 @@ void Monitor::stopDevice(const std::string & device_id) {
         processors_.erase(it);
     }
     runner->proc->stop();
-    if (runner->th.joinable()) runner->th.join();   // 取帧最多 ~10s 后退出
+    // oneshot：取帧最多 ~10s 后退出；persistent：帧槽 close 即醒 + 读流线程 200ms 内
+    // 退出并杀 ffmpeg，run() 末尾 join 读流线程，这一 join 把两个线程都收齐
+    if (runner->th.joinable()) runner->th.join();
 }
 
 json Monitor::start() {
