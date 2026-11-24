@@ -1,0 +1,43 @@
+# vit_align 图文向量化网络配置
+# 架构：Qwen3-VL-2B 视觉塔(冻结) -> mean-pool 2048 -> ProjMLP(可训练) -> 512 维 L2
+#       文本侧 BGE-small-zh-v1.5(冻结, CLS pooling + L2) -> 512 维 L2
+# 两主干均不训练，只训 ProjMLP。
+
+vision:
+  model_path: /home/yuesang/.cache/huggingface/hub/models--Qwen--Qwen3-VL-2B-Instruct/snapshots/89644892e4d85e24eaac8bacfd4f463576704203
+  size: 448            # 固定输入边长（32 的倍数），与板端 rknn 视觉塔口径一致
+  feat_dim: 2048
+
+text:
+  model_path: /data/yuesang/LLM/FG-CLIP/models/bge-small-zh-v1.5
+  feat_dim: 512
+  max_length: 128
+  # 生产同款非对称检索前缀（query 侧加、doc/图像对齐侧不加）
+  query_prefix: "为这个句子生成表示以用于检索相关文章："
+
+head:
+  hidden: 1024
+  out_dim: 512         # 必须等于 text.feat_dim
+  init_logit_scale: 10.0   # 可学习温度初值（同 MARS temp: 10）
+  text_proj: false     # true 时给文侧加恒等初始化的 Linear(512,512) 轻投影（扩展位）
+
+data:
+  root: /data/yuesang/person_data/CUHK-PEDES
+  json_dir: data/json  # make_cuhk_json.py 产物：train.json / test.json
+
+train:
+  img_cache: cache/train_i_*
+  txt_cache: cache/train_t_*
+  batch_size: 2048
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  warmup_steps: 200
+  num_workers: 0       # 缓存矩阵训练，无需 DataLoader worker
+  multi_positive: true # 同 id 样本互为正例（CUHK-PEDES 同人多描述）
+  eval_every: 5
+  runs_dir: runs
+
+eval:
+  img_cache: cache/test_i_*
+  txt_cache: cache/test_t_c*   # 注意避开 test_t_q_*（加前缀查询版），glob 用 _c 前缀区分
