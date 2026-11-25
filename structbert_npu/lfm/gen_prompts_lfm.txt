@@ -1,0 +1,1 @@
+<|startoftext|><|im_start|>user\n一句中文详细描述行人外观：性别、衣着颜色款式、携带物，只写看得见的，不需要描述看不见的，不用解释。<|im_end|>\n<|im_start|>assistant\n

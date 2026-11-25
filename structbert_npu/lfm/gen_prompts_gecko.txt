@@ -1,0 +1,1 @@
+<|im_start|>system\n你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。<|im_end|>\n<|im_start|>user\n一句中文详细描述行人外观：性别、衣着颜色款式、携带物，只写看得见的，不需要描述看不见的，不用解释。<|im_end|>\n<|im_start|>assistant\n

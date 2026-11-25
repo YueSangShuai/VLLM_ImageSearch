@@ -1,0 +1,8 @@
+{
+ "model": "lfm",
+ "prefill_s": 0.033,
+ "e2e_64tok_s": 0.476,
+ "decode_ms_per_tok": 7.0,
+ "decode_tok_per_s": 142.0,
+ "text": "一个女人，穿着黑色上衣、灰色开衫、浅蓝色牛仔裤，手提黑色包。"
+}
