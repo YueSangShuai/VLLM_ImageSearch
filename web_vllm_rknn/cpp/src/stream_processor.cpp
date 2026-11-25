@@ -285,7 +285,7 @@ void StreamProcessor::runPersistent(const std::string & rtsp_url, const std::str
     // PLAN「常驻拉流+双线程」：读流线程只管拉流写帧槽，本线程只做处理，
     // 每帧不再付 RTSP 握手 + 等 I 帧的固定开销；空场扫描周期只剩 YOLO+最小间隔
     printf("[%s] 开始常驻拉流: %s\n", device_name.c_str(), rtsp_url.c_str());
-    const int64_t min_interval_ms = getenv_int("VLM_MIN_INTERVAL_MS", 1000);  // 处理后限流（对策：防 NPU 满载）
+    const int64_t min_interval_ms = getenv_int("VLM_MIN_INTERVAL_MS", 10);    // 处理后限流（对策：防 NPU 满载），默认 10ms≈不限
     const int64_t max_age_ms = getenv_int("VLM_FRAME_MAX_AGE_MS", 5000);      // 旧帧直接丢（对策：死流/积压）
 
     pull_active_ = true;
@@ -314,8 +314,9 @@ void StreamProcessor::runPersistent(const std::string & rtsp_url, const std::str
         }
         if (running_) processFrame(frame);
         if (running_ && min_interval_ms > 0) {
-            for (int64_t i = 0; i < min_interval_ms / 100 && running_; i++)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // 10ms 粒度：限流调到百毫秒级以下时不能被子除整成 0 而形同失效
+            for (int64_t i = 0; i < min_interval_ms / 10 && running_; i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 

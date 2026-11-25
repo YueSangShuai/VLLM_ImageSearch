@@ -474,12 +474,22 @@ librkllmrt 1.3.1 头文件已带 `RKLLMPromptCacheParam{save_prompt_cache, promp
   SIGKILL+waitpid 重连、退避 1→30s、RAII 析构兜底）。stream_processor run() 拆
   oneshot/persistent 两条：persistent 读流线程+处理线程，处理线程 waitNew 唤醒（去 sleep1s
   心跳）、锁外解码、帧龄>VLM_FRAME_MAX_AGE_MS(5000) 丢弃、处理后 VLM_MIN_INTERVAL_MS(1000)
-  限流保留、run 末尾先处理后 join 读流。online 判定：persistent 设备走帧流心跳
+  限流（应要求改默认 1000→10ms，限流 sleep 粒度同步 100ms→10ms 防小值被除整失效；
+  代价=有人场景 VLM/Reranker 背靠背跑，NPU 满载/描述锁风险由使用者自担）、
+  run 末尾先处理后 join 读流。online 判定：persistent 设备走帧流心跳
   （age≤VLM_PULL_STALE_MS=10000 online，连续 2 次超阈才翻 offline＝迟滞；age=-1 未出过帧
   回退原 RTSP 探测，兼作死流兜底）——Monitor::frameHeartbeatAge 透出，server heartbeat_loop
   接入。三件套对策（序号/看门狗/帧龄）、进程组回收、状态迟滞、双线程 join 全部落码。
   未做：软节流（RSS/温度降频，方案标注「可选」）；VLM_DEBUG_LOG_MAX 上线前打开属运维项。
 - 验证：交叉编译+qemu 依赖自检过；宿主新增 cpp/tools/test_pull.cpp 自测（PATH 注入假 ffmpeg
   喂 997B 跨帧边界 chunk）8/8 全过：切帧完整、seq 单调、看门狗杀挂起实例并重连出第二轮帧、
-  stop 1.5s 内收口、全部假实例 waitpid 收干净无僵尸。板上验收清单（拔网线/48h 数进程/
-  同帧滞留压测/满载时延对比）待部署后跑。
+  stop 1.5s 内收口、全部假实例 waitpid 收干净无僵尸。真机探针（test_pull 带 URL 参数）打
+  「一楼电梯厅」子码流：首帧 2.18s（RTSP 握手，一次性），其后 640x480 连续 20fps（间隔
+  45-55ms）、全帧解码成功、帧龄 0-4ms；seq 推进 122、处理端慢半拍被 latest-wins 平滑跳过
+  5 帧——正是设计行为。**改造收益直接可见：一次性模式每帧都要重付握手+等 I 帧（平均 1-2s），
+  常驻后稳态帧间隔=摄像头帧率。**回归缺口 #8（处理停摆期间积压）已宿主闭环：
+  test_pull 加 `stress` 模式=假流 30fps 灌 15s、处理线程停摆 12s 模拟 VLM——醒来
+  seq 2→360（357 帧积压被覆盖、只拿最新一帧）、帧龄 83ms、唤醒 0ms、退出无残留。
+  板上验收清单（拔网线/48h 数进程/满载时延对比）待部署后跑；
+  首次推板因板子失联挂起（10.8.18.118 ping/SSH/5003 全无、/24 扫 pi/pi 无命中，
+  判定关机/死机；scripts/deploy/find_board.py 留作日后找板）。

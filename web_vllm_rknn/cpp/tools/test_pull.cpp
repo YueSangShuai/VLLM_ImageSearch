@@ -35,9 +35,89 @@ static bool writeFile(const char * path, const std::string & s) {
     return f.good();
 }
 
-// 真实流探针：argv = <rtsp_url> [秒数，默认 8]。用线上同款 ffmpeg 参数常驻拉流，
-// 统计帧数/帧间隔/分辨率（验证 image2pipe 常驻链路），不跑检测。
 int main(int argc, char ** argv) {
+    // ---------- 背压压测（PLAN 回归缺口 #8）：处理端停摆 12s「模拟 VLM」，
+    // 期间读流持续进帧；醒来必须直接拿到「最新一帧」（seq 大跳、帧龄小），
+    // 绝不能把积压的几百帧逐条吐出来（latest-wins 真生效） ----------
+    if (argc >= 2 && std::string(argv[1]) == "stress") {
+        const char * sdir = "/tmp/wv_pull_stress";
+        if (system((std::string("rm -rf ") + sdir + " /tmp/wv_pull_stress.pids && mkdir -p " + sdir)
+                       .c_str()) != 0) return 2;
+        // 假 ffmpeg：每 100ms 吐一整包（3 张拼接 JPEG=3 帧），持续 15s ≈ 450 帧
+        std::ofstream py(std::string(sdir) + "/stream.py");
+        py << "#!/usr/bin/env python3\n"
+              "import os,time\n"
+              "open('/tmp/wv_pull_stress.pids','a').write(str(os.getpid())+'\\n')\n"
+              "d=open('/tmp/wv_pull_test.bin','rb').read()\n"
+              "end=time.time()+15\n"
+              "while time.time()<end:\n"
+              "    os.write(1,d)\n"
+              "    time.sleep(0.1)\n";
+        std::ofstream sh(std::string(sdir) + "/ffmpeg");
+        sh << "#!/bin/sh\nexec python3 " << sdir << "/stream.py \"$@\"\n";
+        py.close(); sh.close();
+        chmod((std::string(sdir) + "/stream.py").c_str(), 0755);
+        chmod((std::string(sdir) + "/ffmpeg").c_str(), 0755);
+        setenv("PATH", (std::string(sdir) + ":" + getenv("PATH")).c_str(), 1);
+
+        // 复用 [主测试] 的 3 帧样本文件（先确保存在：内容无所谓，只要都是合法 JPEG）
+        {
+            std::vector<uint8_t> s;
+            ImageRGB img; img.w = img.h = 96; img.rgb.assign((size_t)96 * 96 * 3, 123);
+            auto j = encode_jpeg(img, 90);
+            for (int i = 0; i < 3; i++) s.insert(s.end(), j.begin(), j.end());
+            std::ofstream f(kBin, std::ios::binary);
+            f.write((char *)s.data(), s.size());
+        }
+
+        int failures = 0;
+        printf("[stress] 处理停摆 12s vs 读流 ~30fps\n");
+        LatestFrameSlot slot;
+        PersistentPuller puller(&slot);
+        std::atomic<bool> running{true};
+        std::thread th([&] { puller.loop("rtsp://fake/stress", "stress", running); });
+
+        uint64_t last = 0;
+        std::vector<uint8_t> jpg;
+        int64_t age = 0;
+        if (!slot.waitNew(last, running)) { printf("  [FAIL] 无首帧\n"); return 1; }
+        last = slot.latest(jpg, age);
+        printf("  停摆前 seq=%llu\n", (unsigned long long)last);
+
+        std::this_thread::sleep_for(std::chrono::seconds(12));   // 模拟 VLM 占用处理线程
+        int64_t t0 = ms_now();
+        if (!slot.waitNew(last, running)) { printf("  [FAIL] 停摆后等不到新帧\n"); return 1; }
+        uint64_t seq2 = slot.latest(jpg, age);
+        int64_t wake_ms = ms_now() - t0;
+        uint64_t jump = seq2 - last;
+        printf("  停摆 12s 后: seq %llu→%llu（跳过 %llu 帧）帧龄=%lldms 唤醒耗时=%lldms\n",
+               (unsigned long long)last, (unsigned long long)seq2,
+               (unsigned long long)(jump - 1), (long long)age, (long long)wake_ms);
+        if (jump < 100) { printf("  [FAIL] seq 跳变过小（latest-wins 未生效？）\n"); failures++; }
+        else printf("  [OK] 积压 %llu 帧被覆盖，只拿最新一帧\n", (unsigned long long)(jump - 1));
+        if (age > 500) { printf("  [FAIL] 醒来拿到的是旧帧（age=%lld）\n", (long long)age); failures++; }
+        else printf("  [OK] 醒来即拿新鲜帧（帧龄 %lldms）\n", (long long)age);
+        if (wake_ms > 300) { printf("  [FAIL] 停摆后唤醒过慢 %lldms\n", (long long)wake_ms); failures++; }
+        else printf("  [OK] 停摆结束 %lldms 内即唤醒（无 sleep 节拍）\n", (long long)wake_ms);
+
+        running = false;
+        slot.close();
+        th.join();
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        bool all_reaped = true;
+        {
+            std::ifstream f("/tmp/wv_pull_stress.pids");
+            int p;
+            while (f >> p) if (kill((pid_t)p, 0) == 0) all_reaped = false;
+        }
+        if (all_reaped) printf("  [OK] 流线程退出，压测假 ffmpeg 已回收\n");
+        else { printf("  [FAIL] 有残留进程\n"); failures++; }
+        printf("\n%s (failures=%d)\n", failures ? "STRESS FAILED" : "STRESS PASS", failures);
+        return failures;
+    }
+
+    // 真实流探针：argv = <rtsp_url> [秒数，默认 8]。用线上同款 ffmpeg 参数常驻拉流，
+    // 统计帧数/帧间隔/分辨率（验证 image2pipe 常驻链路），不跑检测。
     if (argc >= 2) {
         int secs = argc >= 3 ? atoi(argv[2]) : 8;
         LatestFrameSlot slot;
